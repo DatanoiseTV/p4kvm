@@ -1,0 +1,94 @@
+/*
+ * SPDX-FileCopyrightText: 2026
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * WiFi station link. The ESP32-P4 has no radio; on boards like the
+ * ESP32-P4-nano the onboard ESP32-C6 provides WiFi over SDIO through the
+ * esp_wifi_remote + esp_hosted components, so the standard esp_wifi API below
+ * is transparently proxied to the C6. SDIO pinning/transport is configured by
+ * esp_hosted's own Kconfig (defaults match the Espressif P4 reference design).
+ */
+#include "wifi_net.h"
+
+#include <string.h>
+
+#include "esp_check.h"
+#include "esp_log.h"
+#include "sdkconfig.h"
+
+static const char *TAG = "p4kvm_wifi";
+
+#if CONFIG_P4KVM_WIFI_ENABLE
+
+#include "esp_event.h"
+#include "esp_netif.h"
+#include "esp_wifi.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+static void wifi_on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    (void)arg;
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
+        esp_wifi_connect();
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        wifi_event_sta_disconnected_t *e = (wifi_event_sta_disconnected_t *)data;
+        ESP_LOGW(TAG, "disconnected (reason %d), reconnecting", e ? e->reason : -1);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        esp_wifi_connect();
+    } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
+        ESP_LOGI(TAG, "Got IP: " IPSTR " - open http://" IPSTR "/ or http://" CONFIG_P4KVM_MDNS_HOSTNAME ".local/",
+                 IP2STR(&e->ip_info.ip), IP2STR(&e->ip_info.ip));
+    }
+}
+
+esp_err_t wifi_net_init(void)
+{
+    if (strlen(CONFIG_P4KVM_WIFI_SSID) == 0) {
+        ESP_LOGW(TAG, "WiFi enabled but SSID empty - skipping");
+        return ESP_OK;
+    }
+
+    esp_netif_t *sta = esp_netif_create_default_wifi_sta();
+    if (!sta) {
+        ESP_LOGE(TAG, "wifi sta netif");
+        return ESP_FAIL;
+    }
+    esp_err_t err = esp_netif_set_hostname(sta, CONFIG_P4KVM_MDNS_HOSTNAME);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "hostname: %s", esp_err_to_name(err));
+    }
+
+    wifi_init_config_t init_cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_RETURN_ON_ERROR(esp_wifi_init(&init_cfg), TAG, "wifi init (C6 SDIO link up?)");
+
+    ESP_RETURN_ON_ERROR(
+        esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_on_event, NULL), TAG, "wifi ev");
+    ESP_RETURN_ON_ERROR(
+        esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_on_event, NULL), TAG, "ip ev");
+
+    wifi_config_t cfg = {0};
+    strlcpy((char *)cfg.sta.ssid, CONFIG_P4KVM_WIFI_SSID, sizeof(cfg.sta.ssid));
+    strlcpy((char *)cfg.sta.password, CONFIG_P4KVM_WIFI_PASSWORD, sizeof(cfg.sta.password));
+    ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), TAG, "mode");
+    ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_STA, &cfg), TAG, "config");
+    ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "start");
+    /* Modem power save adds tens of ms of input latency; this is a KVM. */
+    err = esp_wifi_set_ps(WIFI_PS_NONE);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "ps none: %s", esp_err_to_name(err));
+    }
+    ESP_LOGI(TAG, "WiFi STA connecting to \"%s\"", CONFIG_P4KVM_WIFI_SSID);
+    return ESP_OK;
+}
+
+#else /* !CONFIG_P4KVM_WIFI_ENABLE */
+
+esp_err_t wifi_net_init(void)
+{
+    ESP_LOGD(TAG, "WiFi disabled");
+    return ESP_OK;
+}
+
+#endif

@@ -4,3 +4,9 @@ dependencies:
     version: "^2.0.0"
   espressif/mdns:
     version: "^1.8.0"
+  # The P4 has no radio: esp_wifi_remote proxies the esp_wifi API to a
+  # companion chip (ESP32-C6 on the P4-nano) driven by esp_hosted over SDIO.
+  espressif/esp_wifi_remote:
+    version: "*"
+  espressif/esp_hosted:
+    version: "*"

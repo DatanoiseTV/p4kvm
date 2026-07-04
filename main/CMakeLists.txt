@@ -6,6 +6,8 @@ set(p4kvm_capture_srcs
     "capture_testpat.c"
     "http_server.c"
     "ethernet.c"
+    "net_common.c"
+    "wifi_net.c"
     "jpeg_frame.c"
     "main.c"
     "tc358743.c"
@@ -26,6 +28,7 @@ idf_component_register(
         esp_http_server
         esp_eth
         esp_netif
+        esp_wifi
         mdns
         esp_event
         nvs_flash

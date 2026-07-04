@@ -12,7 +12,9 @@
 #include "ethernet.h"
 #include "http_server.h"
 #include "jpeg_frame.h"
+#include "net_common.h"
 #include "usb_hid.h"
+#include "wifi_net.h"
 
 void app_main(void)
 {
@@ -22,7 +24,10 @@ void app_main(void)
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
+    ESP_ERROR_CHECK(net_common_init());
     ESP_ERROR_CHECK(ethernet_init());
+    ESP_ERROR_CHECK(wifi_net_init());
+    net_mdns_init();
     ESP_ERROR_CHECK(usb_hid_init());
     ESP_ERROR_CHECK(atx_ctrl_init());
 

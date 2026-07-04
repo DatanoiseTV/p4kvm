@@ -111,10 +111,32 @@ menu "P4KVM HDMI → CSI"
     config P4KVM_MDNS_HOSTNAME
         string "mDNS hostname (device is <name>.local)"
         default "p4kvm"
-        depends on P4KVM_ETH_ENABLE
         help
             DNS label only: letters, digits, hyphen. Advertised over mDNS and
-            sent as the DHCP client hostname when supported.
+            sent as the DHCP client hostname when supported (Ethernet and WiFi).
+
+    config P4KVM_WIFI_ENABLE
+        bool "Enable WiFi station (via companion radio, e.g. onboard ESP32-C6)"
+        default n
+        help
+            The ESP32-P4 has no radio; boards like the ESP32-P4-nano carry an
+            ESP32-C6 wired over SDIO. This uses esp_wifi_remote + esp_hosted to
+            drive it with the standard WiFi API. SDIO pins/transport are set in
+            the esp_hosted component's own menuconfig section (defaults match
+            the Espressif P4 reference design). Can run alongside Ethernet.
+            Note the throughput: 1080p30 MJPEG at the default quality is
+            ~40-70 Mbit/s; over WiFi expect to lower the JPEG quality or accept
+            a lower frame rate.
+
+    config P4KVM_WIFI_SSID
+        string "WiFi SSID"
+        default ""
+        depends on P4KVM_WIFI_ENABLE
+
+    config P4KVM_WIFI_PASSWORD
+        string "WiFi password (empty for open network)"
+        default ""
+        depends on P4KVM_WIFI_ENABLE
 
     config P4KVM_ETH_RMII_CLK_GPIO
         int "RMII REFCLK GPIO (external input)"

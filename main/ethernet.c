@@ -9,7 +9,6 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
-#include "mdns.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "p4kvm";
@@ -32,15 +31,7 @@ static void eth_on_got_ip(void *arg, esp_event_base_t base, int32_t id, void *da
 
 esp_err_t ethernet_init(void)
 {
-    esp_err_t err = esp_netif_init();
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-        return err;
-    }
-    err = esp_event_loop_create_default();
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-        return err;
-    }
-
+    /* esp_netif / event loop: net_common_init() (called first from app_main). */
     eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
     eth_phy_config_t phy_config = ETH_PHY_DEFAULT_CONFIG();
     phy_config.phy_addr = CONFIG_P4KVM_ETH_PHY_ADDR;
@@ -81,35 +72,12 @@ esp_err_t ethernet_init(void)
     ESP_RETURN_ON_ERROR(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, eth_on_got_ip, NULL),
                         TAG, "ip ev");
     ESP_RETURN_ON_ERROR(esp_eth_start(s_eth_handle), TAG, "eth start");
-
-    esp_err_t mdns_err = mdns_init();
-    if (mdns_err != ESP_OK) {
-        ESP_LOGW(TAG, "mDNS init failed: %s", esp_err_to_name(mdns_err));
-    } else {
-        mdns_err = mdns_hostname_set(CONFIG_P4KVM_MDNS_HOSTNAME);
-        if (mdns_err != ESP_OK) {
-            ESP_LOGW(TAG, "mDNS hostname: %s", esp_err_to_name(mdns_err));
-        }
-        mdns_err = mdns_instance_name_set("P4KVM");
-        if (mdns_err != ESP_OK) {
-            ESP_LOGW(TAG, "mDNS instance: %s", esp_err_to_name(mdns_err));
-        }
-        mdns_txt_item_t http_txt[] = {
-            {"path", "/"},
-        };
-        mdns_err = mdns_service_add("P4KVM", "_http", "_tcp", 80, http_txt, 1);
-        if (mdns_err != ESP_OK) {
-            ESP_LOGW(TAG, "mDNS _http._tcp: %s", esp_err_to_name(mdns_err));
-        } else {
-            ESP_LOGI(TAG, "mDNS: http://" CONFIG_P4KVM_MDNS_HOSTNAME ".local/");
-        }
-    }
     return ESP_OK;
 }
 #else
 esp_err_t ethernet_init(void)
 {
-    ESP_LOGW(TAG, "Ethernet disabled (enable P4KVM_ETH_ENABLE for HTTP)");
+    ESP_LOGW(TAG, "Ethernet disabled (enable P4KVM_ETH_ENABLE or P4KVM_WIFI_ENABLE for HTTP)");
     return ESP_OK;
 }
 #endif
