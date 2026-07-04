@@ -1,3 +1,10 @@
+# This project targets rev 1.x silicon (see README). IDF 6.0 defaults to rev
+# >= 3.01, and rev <3 / >=3 binaries are mutually incompatible ("huge hardware
+# difference" per IDF Kconfig) - a rev-3 image on rev 1.3 dies at boot with an
+# illegal-instruction panic loop.
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+CONFIG_ESP32P4_REV_MIN_100=y
+
 # Full-frame capture @ 1080p needs PSRAM (ping-pong buffers + JPEG + HTTP copy).
 # esp_http_server: max_open_sockets + 3 internal fds must be <= CONFIG_LWIP_MAX_SOCKETS.
 # Headroom for concurrent /stream + /jpeg-quality + /ws (and dev proxy opening several TCPs).
