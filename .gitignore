@@ -85,4 +85,5 @@ Desktop.ini
 
 .vscode/
 .cache/
-.kilo/
+.kilo/build
+build_*/
