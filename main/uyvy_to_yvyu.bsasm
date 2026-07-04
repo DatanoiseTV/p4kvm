@@ -10,11 +10,11 @@
 # One instruction per 32-bit word: 4 pixels-bytes per BitScrambler clock.
 
 cfg eof_on downstream
-# Prefetch loads 64 bits; we consume 32 per instruction, so on input EOF the
-# pipeline still holds up to 8 bytes that must be flushed downstream. Measured
-# on rev 1.3 silicon: with trailing_bytes 8 the output came up 4 bytes short
-# (the downstream counter starts before the final word drains), so budget 16;
-# surplus zero bytes fall past the output DMA descriptor list and are clipped.
+# The machine holds 96 bits in flight (64-bit prefetch + one 32-bit read
+# stage). Measured on rev 1.3 silicon: trailing_bytes 8 truncated the output
+# by 4 bytes; 16 drains everything. The output buffer is padded by the caller
+# (capture_mjpeg.c) so the surplus trailing zeros have descriptors to land in,
+# otherwise the run never signals completion (ESP_ERR_TIMEOUT).
 cfg trailing_bytes 16
 cfg prefetch true
 

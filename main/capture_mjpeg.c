@@ -218,21 +218,31 @@ void capture_mjpeg_run(capture_ctx_t *c)
      * the JPEG encoder. bitscrambler_loopback_run() handles cache coherency
      * for both buffers on every run.
      */
+    /*
+     * The reorder pipeline holds 96 bits in flight (64-bit prefetch plus one
+     * 32-bit read stage), so after upstream EOF it drains real data plus
+     * trailing zeros. Measured on rev 1.3: an output sized exactly to the
+     * frame either truncates the tail (trailing_bytes 8) or never signals
+     * completion because the surplus trailing bytes have no descriptor to
+     * land in (trailing_bytes 16 → ESP_ERR_TIMEOUT). Padding the output
+     * gives them somewhere to drain; the encoder reads only frame_bytes.
+     */
+    const size_t bs_out_pad = 64;
     bitscrambler_handle_t bs = NULL;
-    ESP_ERROR_CHECK(bitscrambler_loopback_create(&bs, SOC_BITSCRAMBLER_ATTACH_GPSPI2, c->frame_bytes));
+    ESP_ERROR_CHECK(bitscrambler_loopback_create(&bs, SOC_BITSCRAMBLER_ATTACH_GPSPI2, c->frame_bytes + bs_out_pad));
     ESP_ERROR_CHECK(bitscrambler_load_program(bs, s_bs_prog_uyvy_to_yvyu));
 
     size_t align = 0;
     ESP_ERROR_CHECK(esp_cache_get_alignment(MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA, &align));
-    uint8_t *yvyu_buf =
-        heap_caps_aligned_calloc(align, 1, c->frame_bytes, MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    uint8_t *yvyu_buf = heap_caps_aligned_calloc(align, 1, c->frame_bytes + bs_out_pad,
+                                                 MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!yvyu_buf) {
-        ESP_LOGE(CAPTURE_LOG_TAG, "YVYU reorder buffer alloc failed (%zu bytes)", c->frame_bytes);
+        ESP_LOGE(CAPTURE_LOG_TAG, "YVYU reorder buffer alloc failed (%zu bytes)", c->frame_bytes + bs_out_pad);
         vTaskDelete(NULL);
         return;
     }
     /* Drop calloc's dirty zero-fill lines so later DMA writes can't be shadowed. */
-    ESP_ERROR_CHECK(esp_cache_msync(yvyu_buf, c->frame_bytes,
+    ESP_ERROR_CHECK(esp_cache_msync(yvyu_buf, c->frame_bytes + bs_out_pad,
                                     ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE));
     ESP_LOGI(CAPTURE_LOG_TAG, "BitScrambler UYVY→YVYU reorder ready (%zu bytes/frame)", c->frame_bytes);
 #endif
@@ -297,8 +307,9 @@ void capture_mjpeg_run(capture_ctx_t *c)
         const uint8_t *enc_src = (const uint8_t *)src;
 #if CAPTURE_NEEDS_REORDER
         size_t bs_written = 0;
-        esp_err_t ber = bitscrambler_loopback_run(bs, src, c->frame_bytes, yvyu_buf, c->frame_bytes, &bs_written);
-        if (ber != ESP_OK || bs_written != c->frame_bytes) {
+        esp_err_t ber =
+            bitscrambler_loopback_run(bs, src, c->frame_bytes, yvyu_buf, c->frame_bytes + bs_out_pad, &bs_written);
+        if (ber != ESP_OK || bs_written < c->frame_bytes) {
             /* Throttled: at frame rate this would otherwise flood the UART. */
             static uint32_t s_bs_err_logs;
             g_video_stats.enc_errors++;
