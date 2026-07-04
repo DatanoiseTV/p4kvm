@@ -10,6 +10,8 @@
  */
 #include "wireguard_net.h"
 
+#include "runtime_cfg.h"
+
 #include <string.h>
 
 #include "esp_log.h"
@@ -135,24 +137,29 @@ static void wg_task(void *arg)
 
 esp_err_t wireguard_net_start(void)
 {
-    if (strlen(CONFIG_P4KVM_WG_PRIVATE_KEY) == 0 || strlen(CONFIG_P4KVM_WG_PEER_PUBLIC_KEY) == 0 ||
-        strlen(CONFIG_P4KVM_WG_ENDPOINT) == 0) {
-        ESP_LOGW(TAG, "WireGuard enabled but keys/endpoint not configured - skipping");
+    static char priv[64], pub[64], psk[64], ep[96], ip[20], mask[20];
+    runtime_cfg_get_str(RT_KEY_WG_PRIV, CONFIG_P4KVM_WG_PRIVATE_KEY, priv, sizeof(priv));
+    runtime_cfg_get_str(RT_KEY_WG_PEER_PUB, CONFIG_P4KVM_WG_PEER_PUBLIC_KEY, pub, sizeof(pub));
+    runtime_cfg_get_str(RT_KEY_WG_PSK, CONFIG_P4KVM_WG_PRESHARED_KEY, psk, sizeof(psk));
+    runtime_cfg_get_str(RT_KEY_WG_ENDPOINT, CONFIG_P4KVM_WG_ENDPOINT, ep, sizeof(ep));
+    runtime_cfg_get_str(RT_KEY_WG_LOCAL_IP, CONFIG_P4KVM_WG_LOCAL_IP, ip, sizeof(ip));
+    runtime_cfg_get_str(RT_KEY_WG_MASK, CONFIG_P4KVM_WG_LOCAL_NETMASK, mask, sizeof(mask));
+
+    if (strlen(priv) == 0 || strlen(pub) == 0 || strlen(ep) == 0) {
+        ESP_LOGW(TAG, "WireGuard support built but keys/endpoint not configured (web UI Setup) - skipping");
         return ESP_OK;
     }
 
-    s_cfg.private_key = CONFIG_P4KVM_WG_PRIVATE_KEY;
-    s_cfg.public_key = CONFIG_P4KVM_WG_PEER_PUBLIC_KEY;
-#if defined(CONFIG_P4KVM_WG_PRESHARED_KEY)
-    if (strlen(CONFIG_P4KVM_WG_PRESHARED_KEY) > 0) {
-        s_cfg.preshared_key = CONFIG_P4KVM_WG_PRESHARED_KEY;
+    s_cfg.private_key = priv;
+    s_cfg.public_key = pub;
+    if (strlen(psk) > 0) {
+        s_cfg.preshared_key = psk;
     }
-#endif
-    s_cfg.allowed_ip = CONFIG_P4KVM_WG_LOCAL_IP;
-    s_cfg.allowed_ip_mask = CONFIG_P4KVM_WG_LOCAL_NETMASK;
-    s_cfg.endpoint = CONFIG_P4KVM_WG_ENDPOINT;
-    s_cfg.port = CONFIG_P4KVM_WG_PORT;
-    s_cfg.persistent_keepalive = CONFIG_P4KVM_WG_KEEPALIVE;
+    s_cfg.allowed_ip = ip;
+    s_cfg.allowed_ip_mask = mask;
+    s_cfg.endpoint = ep;
+    s_cfg.port = (int)runtime_cfg_get_i32(RT_KEY_WG_PORT, CONFIG_P4KVM_WG_PORT);
+    s_cfg.persistent_keepalive = (int)runtime_cfg_get_i32(RT_KEY_WG_KEEPALIVE, CONFIG_P4KVM_WG_KEEPALIVE);
 
     BaseType_t ok = xTaskCreate(wg_task, "wireguard", 4096, NULL, tskIDLE_PRIORITY + 3, NULL);
     return ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;

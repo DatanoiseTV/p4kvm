@@ -41,6 +41,9 @@ const uint8_t *video_mode_edid(size_t *len);
  */
 esp_err_t video_mode_set_and_reboot(const char *name);
 
+/** Restart the device after a short delay (lets an HTTP response flush). */
+void video_mode_schedule_restart(void);
+
 #ifdef __cplusplus
 }
 #endif

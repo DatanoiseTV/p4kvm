@@ -26,9 +26,12 @@
 #include "mbedtls/base64.h"
 #endif
 
+#include "cJSON.h"
+
 #include "atx_ctrl.h"
 #include "audio_stream.h"
 #include "jpeg_frame.h"
+#include "runtime_cfg.h"
 #include "usb_hid.h"
 #include "video_mode.h"
 #include "video_stats.h"
@@ -366,6 +369,161 @@ static esp_err_t atx_post(httpd_req_t *req)
     return httpd_resp_sendstr(req, "ok\n");
 }
 
+/* Kconfig fallbacks for /config reads; empty when the feature is compiled out. */
+#if CONFIG_P4KVM_WIFI_ENABLE
+#define CFG_DFLT_WIFI_SSID CONFIG_P4KVM_WIFI_SSID
+#define CFG_DFLT_WIFI_PASS CONFIG_P4KVM_WIFI_PASSWORD
+#else
+#define CFG_DFLT_WIFI_SSID ""
+#define CFG_DFLT_WIFI_PASS ""
+#endif
+#if CONFIG_P4KVM_WG_ENABLE
+#define CFG_DFLT_WG_PRIV CONFIG_P4KVM_WG_PRIVATE_KEY
+#define CFG_DFLT_WG_PUB CONFIG_P4KVM_WG_PEER_PUBLIC_KEY
+#define CFG_DFLT_WG_PSK CONFIG_P4KVM_WG_PRESHARED_KEY
+#define CFG_DFLT_WG_EP CONFIG_P4KVM_WG_ENDPOINT
+#define CFG_DFLT_WG_PORT CONFIG_P4KVM_WG_PORT
+#define CFG_DFLT_WG_IP CONFIG_P4KVM_WG_LOCAL_IP
+#define CFG_DFLT_WG_MASK CONFIG_P4KVM_WG_LOCAL_NETMASK
+#define CFG_DFLT_WG_KA CONFIG_P4KVM_WG_KEEPALIVE
+#else
+#define CFG_DFLT_WG_PRIV ""
+#define CFG_DFLT_WG_PUB ""
+#define CFG_DFLT_WG_PSK ""
+#define CFG_DFLT_WG_EP ""
+#define CFG_DFLT_WG_PORT 51820
+#define CFG_DFLT_WG_IP "10.0.0.2"
+#define CFG_DFLT_WG_MASK "255.255.255.0"
+#define CFG_DFLT_WG_KA 25
+#endif
+#ifdef CONFIG_P4KVM_ATX_ACTIVE_HIGH
+#define CFG_DFLT_ATX_LVL 1
+#else
+#define CFG_DFLT_ATX_LVL 0
+#endif
+
+/**
+ * GET /config: current runtime settings as JSON. Secrets (WiFi password,
+ * WireGuard private/preshared key) are never returned - only *_set flags,
+ * so the page can show "configured" without exposing them.
+ */
+static esp_err_t config_get(httpd_req_t *req)
+{
+    AUTH_GATE(req);
+    char ssid[33], pass[65], priv[64], pub[64], psk[64], ep[96], ip[20], mask[20];
+    runtime_cfg_get_str(RT_KEY_WIFI_SSID, CFG_DFLT_WIFI_SSID, ssid, sizeof(ssid));
+    runtime_cfg_get_str(RT_KEY_WIFI_PASS, CFG_DFLT_WIFI_PASS, pass, sizeof(pass));
+    runtime_cfg_get_str(RT_KEY_WG_PRIV, CFG_DFLT_WG_PRIV, priv, sizeof(priv));
+    runtime_cfg_get_str(RT_KEY_WG_PEER_PUB, CFG_DFLT_WG_PUB, pub, sizeof(pub));
+    runtime_cfg_get_str(RT_KEY_WG_PSK, CFG_DFLT_WG_PSK, psk, sizeof(psk));
+    runtime_cfg_get_str(RT_KEY_WG_ENDPOINT, CFG_DFLT_WG_EP, ep, sizeof(ep));
+    runtime_cfg_get_str(RT_KEY_WG_LOCAL_IP, CFG_DFLT_WG_IP, ip, sizeof(ip));
+    runtime_cfg_get_str(RT_KEY_WG_MASK, CFG_DFLT_WG_MASK, mask, sizeof(mask));
+
+    cJSON *root = cJSON_CreateObject();
+    if (!root) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+    }
+    cJSON_AddStringToObject(root, "wifi_ssid", ssid);
+    cJSON_AddBoolToObject(root, "wifi_pass_set", pass[0] != '\0');
+    cJSON_AddBoolToObject(root, "wg_priv_set", priv[0] != '\0');
+    cJSON_AddStringToObject(root, "wg_peer_pubkey", pub);
+    cJSON_AddBoolToObject(root, "wg_psk_set", psk[0] != '\0');
+    cJSON_AddStringToObject(root, "wg_endpoint", ep);
+    cJSON_AddNumberToObject(root, "wg_port", runtime_cfg_get_i32(RT_KEY_WG_PORT, CFG_DFLT_WG_PORT));
+    cJSON_AddStringToObject(root, "wg_local_ip", ip);
+    cJSON_AddStringToObject(root, "wg_local_mask", mask);
+    cJSON_AddNumberToObject(root, "wg_keepalive", runtime_cfg_get_i32(RT_KEY_WG_KEEPALIVE, CFG_DFLT_WG_KA));
+    cJSON_AddNumberToObject(root, "atx_power_gpio", runtime_cfg_get_i32(RT_KEY_ATX_POWER, CONFIG_P4KVM_ATX_POWER_GPIO));
+    cJSON_AddNumberToObject(root, "atx_reset_gpio", runtime_cfg_get_i32(RT_KEY_ATX_RESET, CONFIG_P4KVM_ATX_RESET_GPIO));
+    cJSON_AddBoolToObject(root, "atx_active_high", runtime_cfg_get_i32(RT_KEY_ATX_ACTIVE_HIGH, CFG_DFLT_ATX_LVL) != 0);
+    char *out = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!out) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+    }
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t er = httpd_resp_sendstr(req, out);
+    cJSON_free(out);
+    return er;
+}
+
+/** Store a string field if present in the JSON body. Empty string clears back to the Kconfig fallback path. */
+static void config_take_str(cJSON *root, const char *json_key, const char *nvs_key)
+{
+    cJSON *v = cJSON_GetObjectItemCaseSensitive(root, json_key);
+    if (cJSON_IsString(v)) {
+        runtime_cfg_set_str(nvs_key, v->valuestring);
+    }
+}
+
+static void config_take_i32(cJSON *root, const char *json_key, const char *nvs_key)
+{
+    cJSON *v = cJSON_GetObjectItemCaseSensitive(root, json_key);
+    if (cJSON_IsNumber(v)) {
+        runtime_cfg_set_i32(nvs_key, (int32_t)v->valuedouble);
+    } else if (cJSON_IsBool(v)) {
+        runtime_cfg_set_i32(nvs_key, cJSON_IsTrue(v) ? 1 : 0);
+    }
+}
+
+/**
+ * POST /config: JSON body with any subset of settings; applied on next boot.
+ * `?reboot=1` restarts the device after saving (reuses the video-mode timer
+ * path so the response flushes first).
+ */
+static esp_err_t config_post(httpd_req_t *req)
+{
+    AUTH_GATE(req);
+    char body[1024];
+    int total = req->content_len;
+    if (total <= 0 || total >= (int)sizeof(body)) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "body size");
+    }
+    int got = 0;
+    while (got < total) {
+        int r = httpd_req_recv(req, body + got, total - got);
+        if (r <= 0) {
+            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv");
+        }
+        got += r;
+    }
+    body[total] = '\0';
+
+    cJSON *root = cJSON_Parse(body);
+    if (!root) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "json");
+    }
+    config_take_str(root, "wifi_ssid", RT_KEY_WIFI_SSID);
+    config_take_str(root, "wifi_pass", RT_KEY_WIFI_PASS);
+    config_take_str(root, "wg_private_key", RT_KEY_WG_PRIV);
+    config_take_str(root, "wg_peer_pubkey", RT_KEY_WG_PEER_PUB);
+    config_take_str(root, "wg_psk", RT_KEY_WG_PSK);
+    config_take_str(root, "wg_endpoint", RT_KEY_WG_ENDPOINT);
+    config_take_i32(root, "wg_port", RT_KEY_WG_PORT);
+    config_take_str(root, "wg_local_ip", RT_KEY_WG_LOCAL_IP);
+    config_take_str(root, "wg_local_mask", RT_KEY_WG_MASK);
+    config_take_i32(root, "wg_keepalive", RT_KEY_WG_KEEPALIVE);
+    config_take_i32(root, "atx_power_gpio", RT_KEY_ATX_POWER);
+    config_take_i32(root, "atx_reset_gpio", RT_KEY_ATX_RESET);
+    config_take_i32(root, "atx_active_high", RT_KEY_ATX_ACTIVE_HIGH);
+    cJSON_Delete(root);
+
+    char query[32];
+    bool reboot = false;
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        char rv[4];
+        reboot = (httpd_query_key_value(query, "reboot", rv, sizeof(rv)) == ESP_OK && rv[0] == '1');
+    }
+    httpd_resp_set_type(req, "text/plain");
+    esp_err_t er = httpd_resp_sendstr(req, reboot ? "saved, restarting\n" : "saved\n");
+    if (reboot) {
+        video_mode_schedule_restart();
+    }
+    return er;
+}
+
 /** POST /video-mode?mode=720p60|1080p30 - persist to NVS and restart the device. */
 static esp_err_t video_mode_post(httpd_req_t *req)
 {
@@ -638,6 +796,10 @@ httpd_handle_t http_server_start(void)
     httpd_register_uri_handler(h, &u_atx);
     httpd_uri_t u_vmode = {.uri = "/video-mode", .method = HTTP_POST, .handler = video_mode_post};
     httpd_register_uri_handler(h, &u_vmode);
+    httpd_uri_t u_cfg_get = {.uri = "/config", .method = HTTP_GET, .handler = config_get};
+    httpd_register_uri_handler(h, &u_cfg_get);
+    httpd_uri_t u_cfg_post = {.uri = "/config", .method = HTTP_POST, .handler = config_post};
+    httpd_register_uri_handler(h, &u_cfg_post);
     httpd_uri_t u_ws = {
         .uri = "/ws",
         .method = HTTP_GET,

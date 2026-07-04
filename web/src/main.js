@@ -42,6 +42,22 @@ import "./style.css";
   const ptrSens = $("ptr-sens");
   const sensVal = $("sens-val");
   const diagEl = $("diag");
+  const atxNote = $("atx-note");
+  const cfSsid = $("cf-ssid");
+  const cfPass = $("cf-pass");
+  const cfPassState = $("cf-pass-state");
+  const cfWgEp = $("cf-wg-ep");
+  const cfWgPort = $("cf-wg-port");
+  const cfWgPriv = $("cf-wg-priv");
+  const cfWgPrivState = $("cf-wg-priv-state");
+  const cfWgPub = $("cf-wg-pub");
+  const cfWgPsk = $("cf-wg-psk");
+  const cfWgPskState = $("cf-wg-psk-state");
+  const cfWgIp = $("cf-wg-ip");
+  const cfAtxPwr = $("cf-atx-pwr");
+  const cfAtxRst = $("cf-atx-rst");
+  const cfAtxLvl = $("cf-atx-lvl");
+  const btnCfgSave = $("btn-cfg-save");
   const drFoot = $("dr-foot");
 
   const MODE_KEY = "p4kvm_pointer_mode";
@@ -363,10 +379,10 @@ import "./style.css";
     const reset = !!d.atx_reset;
     if (!power && !reset) return;
     atxInitDone = true;
-    secPower.hidden = false;
     btnAtxPower.hidden = !power;
     btnAtxForce.hidden = !power;
     btnAtxReset.hidden = !reset;
+    atxNote.hidden = true;
   }
 
   /** SYS_STATUS bits (TC358743): 0x01 DDC5V, 0x02 TMDS, 0x80 SYNC. */
@@ -497,6 +513,65 @@ import "./style.css";
       }
     } catch (e) { /* device may still be starting */ }
   }
+
+  /* ---------------- setup form (/config) ---------------- */
+
+  async function loadConfigForm() {
+    try {
+      const r = await fetch("/config", { cache: "no-store" });
+      if (!r.ok) return;
+      const c = await r.json();
+      cfSsid.value = c.wifi_ssid || "";
+      cfPassState.textContent = c.wifi_pass_set ? "(set)" : "(not set)";
+      cfWgEp.value = c.wg_endpoint || "";
+      cfWgPort.value = String(c.wg_port || 51820);
+      cfWgPrivState.textContent = c.wg_priv_set ? "(set)" : "(not set)";
+      cfWgPub.value = c.wg_peer_pubkey || "";
+      cfWgPskState.textContent = c.wg_psk_set ? "(set)" : "(optional, not set)";
+      cfWgIp.value = c.wg_local_ip || "";
+      cfAtxPwr.value = String(c.atx_power_gpio);
+      cfAtxRst.value = String(c.atx_reset_gpio);
+      cfAtxLvl.checked = !!c.atx_active_high;
+    } catch (e) {
+      /* device restarting */
+    }
+  }
+
+  btnCfgSave.addEventListener("click", async function () {
+    if (!window.confirm("Save settings and restart the device (about 10 s)?")) return;
+    const body = {
+      wifi_ssid: cfSsid.value.trim(),
+      wg_endpoint: cfWgEp.value.trim(),
+      wg_port: parseInt(cfWgPort.value, 10) || 51820,
+      wg_peer_pubkey: cfWgPub.value.trim(),
+      wg_local_ip: cfWgIp.value.trim(),
+      atx_power_gpio: parseInt(cfAtxPwr.value, 10),
+      atx_reset_gpio: parseInt(cfAtxRst.value, 10),
+      atx_active_high: cfAtxLvl.checked,
+    };
+    /* Secrets: only send when the user typed something (empty = keep). */
+    if (cfPass.value) body.wifi_pass = cfPass.value;
+    if (cfWgPriv.value) body.wg_private_key = cfWgPriv.value.trim();
+    if (cfWgPsk.value) body.wg_psk = cfWgPsk.value.trim();
+    try {
+      const r = await fetch("/config?reboot=1", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (r.ok) {
+        restarting = true;
+        statsFresh = false;
+        setStatus("RESTARTING", "warn");
+        setHint("settings saved, device restarting…");
+        drawerOpen(false);
+      } else {
+        setHint("save failed: " + r.status);
+      }
+    } catch (e) {
+      setHint("save failed (network)");
+    }
+  });
 
   /* ---------------- resolution ---------------- */
 
@@ -1107,6 +1182,7 @@ import "./style.css";
     statsKickoff = null;
     pollDeviceStats();
     statsTimer = setInterval(pollDeviceStats, 2000);
+    loadConfigForm();
   }, 800);
 
   refreshInputUi();

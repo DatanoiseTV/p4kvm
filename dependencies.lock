@@ -1,4 +1,14 @@
 dependencies:
+  espressif/cjson:
+    component_hash: e788323270d90738662d66fffa910bfe1fba019bba087f01557e70c40485b469
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.7.19~2
   espressif/eppp_link:
     component_hash: 04f7f31868b8ae6014c96132740a192d09611a6e46aaa7038c865ffc7e26b38f
     dependencies:
@@ -117,10 +127,11 @@ dependencies:
       type: idf
     version: 6.0.0
 direct_dependencies:
+- espressif/cjson
 - espressif/esp_hosted
 - espressif/esp_tinyusb
 - espressif/esp_wifi_remote
 - espressif/mdns
-manifest_hash: b09067f370d4776e32ce7378858e441a34bb2199ae8e8b0b44e98f3c2dce98a4
+manifest_hash: 08d9f5dcf2fc94dd7d876c08b92db8f3238024828c18901720fcb077ee363216
 target: esp32p4
 version: 3.0.0

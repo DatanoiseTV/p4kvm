@@ -84,6 +84,23 @@ static void video_mode_restart_cb(void *arg)
     esp_restart();
 }
 
+void video_mode_schedule_restart(void)
+{
+    /* One-shot delay so a pending HTTP response reaches the client first. */
+    static esp_timer_handle_t s_restart_timer;
+    if (!s_restart_timer) {
+        const esp_timer_create_args_t targs = {
+            .callback = video_mode_restart_cb,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "vmode_rst",
+        };
+        if (esp_timer_create(&targs, &s_restart_timer) != ESP_OK) {
+            esp_restart(); /* fallback: restart now */
+        }
+    }
+    esp_timer_start_once(s_restart_timer, 400 * 1000);
+}
+
 esp_err_t video_mode_set_and_reboot(const char *name)
 {
     if (!name) {
@@ -110,19 +127,7 @@ esp_err_t video_mode_set_and_reboot(const char *name)
             return err;
         }
         ESP_LOGW(TAG, "video mode -> %s, restarting", name);
-        /* One-shot delay so the HTTP response reaches the client first. */
-        static esp_timer_handle_t s_restart_timer;
-        if (!s_restart_timer) {
-            const esp_timer_create_args_t targs = {
-                .callback = video_mode_restart_cb,
-                .dispatch_method = ESP_TIMER_TASK,
-                .name = "vmode_rst",
-            };
-            if (esp_timer_create(&targs, &s_restart_timer) != ESP_OK) {
-                esp_restart(); /* fallback: restart now */
-            }
-        }
-        esp_timer_start_once(s_restart_timer, 400 * 1000);
+        video_mode_schedule_restart();
         return ESP_OK;
     }
     return ESP_ERR_INVALID_ARG;

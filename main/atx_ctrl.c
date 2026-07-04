@@ -4,6 +4,8 @@
  */
 #include "atx_ctrl.h"
 
+#include "runtime_cfg.h"
+
 #include <stdatomic.h>
 
 #include "driver/gpio.h"
@@ -25,10 +27,13 @@ static const char *TAG = "atx";
  * Kconfig bools are undefined (not 0) when off, hence the ifdef.
  */
 #ifdef CONFIG_P4KVM_ATX_ACTIVE_HIGH
-#define ATX_ACTIVE_LEVEL 1
+#define ATX_ACTIVE_DEFAULT 1
 #else
-#define ATX_ACTIVE_LEVEL 0
+#define ATX_ACTIVE_DEFAULT 0
 #endif
+/* Resolved once at init from NVS (web UI Setup) with the Kconfig fallback. */
+static int s_active_level = ATX_ACTIVE_DEFAULT;
+#define ATX_ACTIVE_LEVEL s_active_level
 
 typedef struct {
     int gpio;
@@ -38,8 +43,8 @@ typedef struct {
     atomic_bool busy;
 } atx_pin_t;
 
-static atx_pin_t s_power = {.gpio = CONFIG_P4KVM_ATX_POWER_GPIO};
-static atx_pin_t s_reset = {.gpio = CONFIG_P4KVM_ATX_RESET_GPIO};
+static atx_pin_t s_power = {.gpio = -1};
+static atx_pin_t s_reset = {.gpio = -1};
 
 static bool atx_pin_available(const atx_pin_t *pin)
 {
@@ -81,6 +86,9 @@ static esp_err_t atx_pin_init(atx_pin_t *pin, const char *name)
 
 esp_err_t atx_ctrl_init(void)
 {
+    s_power.gpio = (int)runtime_cfg_get_i32(RT_KEY_ATX_POWER, CONFIG_P4KVM_ATX_POWER_GPIO);
+    s_reset.gpio = (int)runtime_cfg_get_i32(RT_KEY_ATX_RESET, CONFIG_P4KVM_ATX_RESET_GPIO);
+    s_active_level = runtime_cfg_get_i32(RT_KEY_ATX_ACTIVE_HIGH, ATX_ACTIVE_DEFAULT) ? 1 : 0;
     ESP_RETURN_ON_ERROR(atx_pin_init(&s_power, "atx_power"), TAG, "power");
     ESP_RETURN_ON_ERROR(atx_pin_init(&s_reset, "atx_reset"), TAG, "reset");
     return ESP_OK;

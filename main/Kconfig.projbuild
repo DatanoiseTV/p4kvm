@@ -102,8 +102,8 @@ menu "P4KVM HDMI → CSI"
         depends on P4KVM_AUDIO_ENABLE
 
     config P4KVM_WG_ENABLE
-        bool "Enable WireGuard tunnel"
-        default n
+        bool "Build WireGuard tunnel support"
+        default y
         help
             Brings up a WireGuard client tunnel (lwIP implementation) once the
             network has an IP and NTP time is synced. The KVM is then
@@ -198,8 +198,8 @@ menu "P4KVM HDMI → CSI"
             sent as the DHCP client hostname when supported (Ethernet and WiFi).
 
     config P4KVM_WIFI_ENABLE
-        bool "Enable WiFi station (via companion radio, e.g. onboard ESP32-C6)"
-        default n
+        bool "Build WiFi station support (via companion radio, e.g. onboard ESP32-C6)"
+        default y
         help
             The ESP32-P4 has no radio; boards like the ESP32-P4-nano carry an
             ESP32-C6 wired over SDIO. This uses esp_wifi_remote + esp_hosted to

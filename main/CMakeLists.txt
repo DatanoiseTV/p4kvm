@@ -12,6 +12,7 @@ set(p4kvm_capture_srcs
     "wireguard_net.c"
     "jpeg_frame.c"
     "main.c"
+    "runtime_cfg.c"
     "tc358743.c"
     "usb_hid.c"
     "video_mode.c"
@@ -43,6 +44,7 @@ idf_component_register(
         esp_mm
         esp_timer
         mbedtls
+        espressif__cjson
         espressif__esp_tinyusb
         esp_wireguard
 )

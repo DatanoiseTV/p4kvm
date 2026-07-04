@@ -71,13 +71,14 @@
         </div>
       </section>
 
-      <section class="dr-sec" id="sec-power" hidden>
+      <section class="dr-sec" id="sec-power">
         <h2>HOST POWER</h2>
         <div class="row">
           <button type="button" class="act" id="btn-atx-power" hidden title="Tap power (boot / soft shutdown)">POWER</button>
           <button type="button" class="act" id="btn-atx-reset" hidden title="Tap reset">RESET</button>
           <button type="button" class="act danger" id="btn-atx-force" hidden title="Hold power 5 s (force off)">FORCE OFF</button>
         </div>
+        <p class="note" id="atx-note">Not wired: set the power/reset GPIOs in Setup below (via optocoupler), save and restart.</p>
       </section>
 
       <section class="dr-sec">
@@ -101,6 +102,23 @@
           <span class="fld-l">Sensitivity (relative mode) <b id="sens-val">100%</b></span>
           <input type="range" id="ptr-sens" min="25" max="300" step="5" value="100" />
         </label>
+      </section>
+
+      <section class="dr-sec">
+        <h2>SETUP</h2>
+        <p class="note">Stored on the device; applied after restart.</p>
+        <label class="fld"><span class="fld-l">WiFi SSID</span><input type="text" class="txt" id="cf-ssid" autocomplete="off" /></label>
+        <label class="fld"><span class="fld-l">WiFi password <b id="cf-pass-state"></b></span><input type="password" class="txt" id="cf-pass" placeholder="leave empty to keep" autocomplete="new-password" /></label>
+        <label class="fld"><span class="fld-l">WireGuard endpoint (host)</span><input type="text" class="txt" id="cf-wg-ep" autocomplete="off" /></label>
+        <label class="fld"><span class="fld-l">WireGuard port</span><input type="number" class="txt" id="cf-wg-port" min="1" max="65535" /></label>
+        <label class="fld"><span class="fld-l">WireGuard private key <b id="cf-wg-priv-state"></b></span><input type="password" class="txt" id="cf-wg-priv" placeholder="leave empty to keep" autocomplete="new-password" /></label>
+        <label class="fld"><span class="fld-l">Peer public key</span><input type="text" class="txt" id="cf-wg-pub" autocomplete="off" /></label>
+        <label class="fld"><span class="fld-l">Preshared key (optional) <b id="cf-wg-psk-state"></b></span><input type="password" class="txt" id="cf-wg-psk" placeholder="leave empty to keep" autocomplete="new-password" /></label>
+        <label class="fld"><span class="fld-l">Tunnel IP</span><input type="text" class="txt" id="cf-wg-ip" autocomplete="off" /></label>
+        <label class="fld"><span class="fld-l">ATX power GPIO (-1 off)</span><input type="number" class="txt" id="cf-atx-pwr" min="-1" max="54" /></label>
+        <label class="fld"><span class="fld-l">ATX reset GPIO (-1 off)</span><input type="number" class="txt" id="cf-atx-rst" min="-1" max="54" /></label>
+        <label class="fld"><span class="fld-l">ATX press drives GPIO high</span><span class="gear-ctrl"><input type="checkbox" id="cf-atx-lvl" /></span></label>
+        <div class="row"><button type="button" class="act" id="btn-cfg-save">SAVE &amp; RESTART</button></div>
       </section>
 
       <section class="dr-sec">

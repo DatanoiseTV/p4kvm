@@ -10,6 +10,8 @@
  */
 #include "wifi_net.h"
 
+#include "runtime_cfg.h"
+
 #include <string.h>
 
 #include "esp_check.h"
@@ -87,8 +89,12 @@ static void wifi_on_event(void *arg, esp_event_base_t base, int32_t id, void *da
 
 esp_err_t wifi_net_init(void)
 {
-    if (strlen(CONFIG_P4KVM_WIFI_SSID) == 0) {
-        ESP_LOGW(TAG, "WiFi enabled but SSID empty - skipping");
+    char ssid[33];
+    char pass[65];
+    runtime_cfg_get_str(RT_KEY_WIFI_SSID, CONFIG_P4KVM_WIFI_SSID, ssid, sizeof(ssid));
+    runtime_cfg_get_str(RT_KEY_WIFI_PASS, CONFIG_P4KVM_WIFI_PASSWORD, pass, sizeof(pass));
+    if (strlen(ssid) == 0) {
+        ESP_LOGW(TAG, "WiFi support built but no SSID configured (web UI Setup or menuconfig) - skipping");
         return ESP_OK;
     }
 
@@ -120,8 +126,8 @@ esp_err_t wifi_net_init(void)
         esp_event_handler_register(IP_EVENT, IP_EVENT_STA_LOST_IP, wifi_on_event, NULL), TAG, "lost ip ev");
 
     wifi_config_t cfg = {0};
-    strlcpy((char *)cfg.sta.ssid, CONFIG_P4KVM_WIFI_SSID, sizeof(cfg.sta.ssid));
-    strlcpy((char *)cfg.sta.password, CONFIG_P4KVM_WIFI_PASSWORD, sizeof(cfg.sta.password));
+    strlcpy((char *)cfg.sta.ssid, ssid, sizeof(cfg.sta.ssid));
+    strlcpy((char *)cfg.sta.password, pass, sizeof(cfg.sta.password));
     /* Reliability over first-association speed: scan every channel and pick
      * the strongest BSS instead of the first match (matters with repeaters /
      * mesh APs broadcasting the same SSID). */
@@ -135,7 +141,7 @@ esp_err_t wifi_net_init(void)
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "ps none: %s", esp_err_to_name(err));
     }
-    ESP_LOGI(TAG, "WiFi STA connecting to \"%s\" (power save off)", CONFIG_P4KVM_WIFI_SSID);
+    ESP_LOGI(TAG, "WiFi STA connecting to \"%s\" (power save off)", ssid);
     return ESP_OK;
 }
 

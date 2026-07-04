@@ -10,3 +10,6 @@ dependencies:
     version: "*"
   espressif/esp_hosted:
     version: "*"
+  # cJSON left IDF core in v6; used by the /config settings endpoint.
+  espressif/cjson:
+    version: "*"
