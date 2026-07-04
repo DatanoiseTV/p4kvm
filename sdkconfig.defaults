@@ -5,6 +5,12 @@
 CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
 CONFIG_ESP32P4_REV_MIN_100=y
 
+# P4-nano ships 16 MB flash; the 2 MB default made the bootloader warn and
+# capped the app at a 1 MB factory partition that was 95 % full.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
 # Full-frame capture @ 1080p needs PSRAM (ping-pong buffers + JPEG + HTTP copy).
 # esp_http_server: max_open_sockets + 3 internal fds must be <= CONFIG_LWIP_MAX_SOCKETS.
 # Headroom for concurrent /stream + /jpeg-quality + /ws (and dev proxy opening several TCPs).

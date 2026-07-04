@@ -76,6 +76,25 @@ static const uint8_t s_configuration_descriptor[] = {
     TUD_HID_DESCRIPTOR(0, 4, false, sizeof(s_hid_report_descriptor), 0x81, 16, 10),
 };
 
+/* Explicit device descriptor (Espressif VID, TinyUSB generic PID) so the
+ * stack does not fall back to defaults with a boot-time warning. */
+static const tusb_desc_device_t s_device_descriptor = {
+    .bLength = sizeof(tusb_desc_device_t),
+    .bDescriptorType = TUSB_DESC_DEVICE,
+    .bcdUSB = 0x0200,
+    .bDeviceClass = 0x00,
+    .bDeviceSubClass = 0x00,
+    .bDeviceProtocol = 0x00,
+    .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
+    .idVendor = 0x303a,
+    .idProduct = 0x4004,
+    .bcdDevice = 0x0100,
+    .iManufacturer = 1,
+    .iProduct = 2,
+    .iSerialNumber = 3,
+    .bNumConfigurations = 1,
+};
+
 typedef enum {
     Q_MOUSE,
     Q_KEY,
@@ -372,7 +391,7 @@ esp_err_t usb_hid_init(void)
     ESP_RETURN_ON_FALSE(s_hid_q, ESP_ERR_NO_MEM, TAG, "queue");
 
     tinyusb_config_t tusb_cfg = TINYUSB_DEFAULT_CONFIG(tinyusb_on_event);
-    tusb_cfg.descriptor.device = NULL;
+    tusb_cfg.descriptor.device = &s_device_descriptor;
     tusb_cfg.descriptor.full_speed_config = s_configuration_descriptor;
     tusb_cfg.descriptor.string = s_string_descriptor;
     tusb_cfg.descriptor.string_count = sizeof(s_string_descriptor) / sizeof(s_string_descriptor[0]);
