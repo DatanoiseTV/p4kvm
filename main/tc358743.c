@@ -551,6 +551,14 @@ void tc358743_set_csi_uyvy422(tc358743_t *d, bool uyvy422)
     apply_csi_color_space(d);
 }
 
+void tc358743_select_csi_uyvy422(tc358743_t *d, bool uyvy422)
+{
+    if (!d) {
+        return;
+    }
+    d->csi_uyvy422 = uyvy422;
+}
+
 static void set_csi_lanes(tc358743_t *d, unsigned lanes)
 {
     tc358743_cfg_t *pdata = &d->cfg;
@@ -691,7 +699,7 @@ esp_err_t tc358743_init_streaming(tc358743_t *d)
     enable_stream(d, false);
     set_pll(d);
     set_csi_lanes(d, d->cfg.lanes);
-    d->csi_uyvy422 = false;
+    /* Packing chosen via tc358743_select_csi_uyvy422() before this call (default RGB888). */
     apply_csi_color_space(d);
 
     wr16(d, INTSTATUS, 0xffff);
@@ -872,6 +880,20 @@ void tc358743_debug_bridge(tc358743_t *d)
              " CSI_STATUS=0x%04x (Hlt:%u RxAct:%u TxAct:%u WSync:%u) CSIctl=0x%04x CSIint=0x%04x (IntHlt:%u INTER:%u)",
              csi, csi_hlt, csi_rxact, csi_txact, csi_wsync, csi_ctl, csi_int, csi_int_hlt, csi_inter);
 #endif /* CONFIG_P4KVM_TC358743_ADV_DEBUG */
+}
+
+esp_err_t tc358743_full_reinit(tc358743_t *d)
+{
+    ESP_RETURN_ON_FALSE(d, ESP_ERR_INVALID_ARG, TAG, "dev");
+    /* Register-level reset of every block init_streaming touches (SYSCTL resets,
+     * PLL, CSI TX, EDID reload, HPD cycle). The RESETN GPIO is deliberately not
+     * pulsed: the I2C device handle stays valid and the chip re-inits cleanly
+     * from registers alone. */
+    esp_err_t er = tc358743_init_streaming(d);
+    if (er != ESP_OK) {
+        return er;
+    }
+    return tc358743_enable_hdmi_output(d);
 }
 
 esp_err_t tc358743_set_streaming(tc358743_t *d, bool on)

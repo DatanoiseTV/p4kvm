@@ -38,7 +38,7 @@
 static esp_cam_ctlr_handle_t s_cam;
 static isp_proc_handle_t s_isp_bypass;
 
-static const uint32_t s_csi_expected_dt = 0x24u;
+static const uint32_t s_csi_expected_dt = CAPTURE_CSI_DATA_TYPE;
 
 static capture_ctx_t s_cap;
 
@@ -134,17 +134,15 @@ void capture_debug_csi_timeout(capture_ctx_t *c, unsigned bpp, size_t fb_bytes)
     }
 }
 
-unsigned capture_csi_bpp(void)
-{
-    return 24u;
-}
-
 void capture_fill_esp_cam_color_types(esp_cam_ctlr_csi_config_t *csi, esp_isp_processor_cfg_t *isp)
 {
-    csi->input_data_color_type = CAM_CTLR_COLOR_RGB888;
-    csi->output_data_color_type = CAM_CTLR_COLOR_RGB888;
-    isp->input_data_color_type = ISP_COLOR_RGB888;
-    isp->output_data_color_type = ISP_COLOR_RGB888;
+    /* Same in/out type keeps the CSI bridge color converter in bypass (the
+     * converter itself is rev >= 3.0-only). For YUV422, UYVY lands in DRAM
+     * as-is and the BitScrambler pass reorders it for the JPEG encoder. */
+    csi->input_data_color_type = CAPTURE_CAM_COLOR;
+    csi->output_data_color_type = CAPTURE_CAM_COLOR;
+    isp->input_data_color_type = CAPTURE_ISP_COLOR;
+    isp->output_data_color_type = CAPTURE_ISP_COLOR;
 }
 
 static void capture_configure_p4_csi_bridge(uint32_t hres, uint32_t vres)
@@ -210,11 +208,14 @@ capture_ctx_t *capture_hw_init_start(void)
     };
     ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_cfg, &i2c_bus));
     ESP_ERROR_CHECK(tc358743_probe(i2c_bus, NULL, &s_cap.tc));
+#if CONFIG_P4KVM_PIPELINE_YUV422_BS
+    tc358743_select_csi_uyvy422(s_cap.tc, true);
+#endif
     ESP_ERROR_CHECK(tc358743_init_streaming(s_cap.tc));
 
     s_cap.hres = P4KVM_CSI_H_RES;
     s_cap.vres = P4KVM_CSI_V_RES;
-    s_cap.frame_bytes = (size_t)s_cap.hres * (size_t)s_cap.vres * 3u;
+    s_cap.frame_bytes = (size_t)s_cap.hres * (size_t)s_cap.vres * (CAPTURE_PIXEL_BPP / 8u);
 
     size_t align = 0;
     ESP_ERROR_CHECK(esp_cache_get_alignment(MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA, &align));
@@ -229,12 +230,21 @@ capture_ctx_t *capture_hw_init_start(void)
     for (int i = 0; i < CAPTURE_FB_COUNT; i++) {
         s_cap.fb[i] = blk + ((size_t)i * s_cap.frame_bytes);
     }
+    /*
+     * calloc's zero-fill left the whole ring dirty in the write-back cache.
+     * Flush and drop those lines once, now; afterwards no CPU write ever
+     * touches the ring (CSI DMA writes, JPEG/BitScrambler DMA reads), so the
+     * previous 6 MB-per-frame msync in the encode loop is unnecessary.
+     */
+    ESP_ERROR_CHECK(esp_cache_msync(blk, (size_t)CAPTURE_FB_COUNT * s_cap.frame_bytes,
+                                    ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE));
     s_cap.ping_fb_idx = 0;
     s_cap.done_fb = NULL;
     s_cap.csi_dma_done_irqs = 0;
     s_cap.csi_get_new_irqs = 0;
 
-    ESP_LOGI(CAPTURE_LOG_TAG, "CSI 24bpp BGR ring %u×%zu bytes (align %zu)", CAPTURE_FB_COUNT, s_cap.frame_bytes, align);
+    ESP_LOGI(CAPTURE_LOG_TAG, "CSI %ubpp ring %u×%zu bytes (align %zu, DT 0x%02x)", CAPTURE_PIXEL_BPP, CAPTURE_FB_COUNT,
+             s_cap.frame_bytes, align, (unsigned)s_csi_expected_dt);
 
     s_cap.csi_done_sem = xSemaphoreCreateCounting(32, 0);
     if (!s_cap.csi_done_sem) {
@@ -302,12 +312,13 @@ static void capture_drain_csi_done_sem(SemaphoreHandle_t sem)
     }
 }
 
-esp_err_t capture_hw_hdmi_recover(capture_ctx_t *c)
+esp_err_t capture_hw_hdmi_recover(capture_ctx_t *c, bool deep)
 {
     ESP_RETURN_ON_FALSE(c && c->tc && c->csi_done_sem, ESP_ERR_INVALID_ARG, CAPTURE_LOG_TAG, "ctx");
     ESP_RETURN_ON_FALSE(s_cam, ESP_ERR_INVALID_STATE, CAPTURE_LOG_TAG, "cam");
 
-    ESP_LOGW(CAPTURE_LOG_TAG, "HDMI/camera recover: esp_cam stop → HDMI hotplug → MIPI reapply → esp_cam start");
+    ESP_LOGW(CAPTURE_LOG_TAG, "HDMI/camera recover (%s): esp_cam stop → %s → MIPI reapply → esp_cam start",
+             deep ? "deep" : "hotplug", deep ? "TC358743 full re-init" : "HDMI hotplug");
 
     esp_err_t er = esp_cam_ctlr_stop(s_cam);
     if (er == ESP_ERR_INVALID_STATE) {
@@ -319,9 +330,10 @@ esp_err_t capture_hw_hdmi_recover(capture_ctx_t *c)
 
     capture_drain_csi_done_sem(c->csi_done_sem);
 
-    er = tc358743_hdmi_hotplug_reset(c->tc);
+    er = deep ? tc358743_full_reinit(c->tc) : tc358743_hdmi_hotplug_reset(c->tc);
     if (er != ESP_OK) {
-        ESP_LOGW(CAPTURE_LOG_TAG, "tc358743_hdmi_hotplug_reset: %s", esp_err_to_name(er));
+        ESP_LOGW(CAPTURE_LOG_TAG, "%s: %s", deep ? "tc358743_full_reinit" : "tc358743_hdmi_hotplug_reset",
+                 esp_err_to_name(er));
     }
 
     wait_tc358743_pixel_stream(c->tc, 5000);

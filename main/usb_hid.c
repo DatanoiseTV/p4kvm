@@ -24,9 +24,45 @@ static const char *TAG = "usb_hid";
 
 #define TUSB_DESC_TOTAL_LEN (TUD_CONFIG_DESC_LEN + CFG_TUD_HID * TUD_HID_DESC_LEN)
 
+/** Absolute pointer report ID (keyboard = 1, relative mouse = 2). */
+#define P4KVM_HID_REPORT_ID_ABS 3
+
+/** Logical maximum of the absolute pointer axes (0..32767, tablet convention). */
+#define P4KVM_ABS_AXIS_MAX 32767
+
+/**
+ * Absolute pointer ("virtual tablet"): the host places the cursor at the
+ * reported coordinate, so browser-side pixel positions map 1:1 to the target
+ * screen with no drift from host pointer acceleration. Same shape QEMU's
+ * usb-tablet and PiKVM use; works on Windows, macOS and Linux without drivers.
+ */
+#define P4KVM_HID_REPORT_DESC_ABS_POINTER(...)                                                    \
+    HID_USAGE_PAGE(HID_USAGE_PAGE_DESKTOP), HID_USAGE(HID_USAGE_DESKTOP_MOUSE),                   \
+        HID_COLLECTION(HID_COLLECTION_APPLICATION), __VA_ARGS__ HID_USAGE(HID_USAGE_DESKTOP_POINTER), \
+        HID_COLLECTION(HID_COLLECTION_PHYSICAL), /* 5 buttons */                                  \
+        HID_USAGE_PAGE(HID_USAGE_PAGE_BUTTON), HID_USAGE_MIN(1), HID_USAGE_MAX(5),                \
+        HID_LOGICAL_MIN(0), HID_LOGICAL_MAX(1), HID_REPORT_COUNT(5), HID_REPORT_SIZE(1),          \
+        HID_INPUT(HID_DATA | HID_VARIABLE | HID_ABSOLUTE), /* padding */                          \
+        HID_REPORT_COUNT(1), HID_REPORT_SIZE(3), HID_INPUT(HID_CONSTANT), /* X/Y 0..32767 */      \
+        HID_USAGE_PAGE(HID_USAGE_PAGE_DESKTOP), HID_USAGE(HID_USAGE_DESKTOP_X),                   \
+        HID_USAGE(HID_USAGE_DESKTOP_Y), HID_LOGICAL_MIN_N(0, 2),                                  \
+        HID_LOGICAL_MAX_N(P4KVM_ABS_AXIS_MAX, 2), HID_REPORT_SIZE(16), HID_REPORT_COUNT(2),       \
+        HID_INPUT(HID_DATA | HID_VARIABLE | HID_ABSOLUTE), /* wheel */                            \
+        HID_USAGE(HID_USAGE_DESKTOP_WHEEL), HID_LOGICAL_MIN(0x81), HID_LOGICAL_MAX(0x7f),         \
+        HID_REPORT_SIZE(8), HID_REPORT_COUNT(1), HID_INPUT(HID_DATA | HID_VARIABLE | HID_RELATIVE), \
+        HID_COLLECTION_END, HID_COLLECTION_END
+
+typedef struct __attribute__((packed)) {
+    uint8_t buttons;
+    uint16_t x;
+    uint16_t y;
+    int8_t wheel;
+} p4kvm_abs_pointer_report_t;
+
 static const uint8_t s_hid_report_descriptor[] = {
     TUD_HID_REPORT_DESC_KEYBOARD(HID_REPORT_ID(HID_ITF_PROTOCOL_KEYBOARD)),
     TUD_HID_REPORT_DESC_MOUSE(HID_REPORT_ID(HID_ITF_PROTOCOL_MOUSE)),
+    P4KVM_HID_REPORT_DESC_ABS_POINTER(HID_REPORT_ID(P4KVM_HID_REPORT_ID_ABS)),
 };
 
 static const char *s_string_descriptor[] = {
@@ -69,9 +105,6 @@ typedef struct {
 static QueueHandle_t s_hid_q;
 static TaskHandle_t s_hid_task;
 static volatile bool s_usb_mounted;
-static bool s_have_mouse;
-static uint16_t s_last_mx;
-static uint16_t s_last_my;
 
 uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
 {
@@ -119,12 +152,10 @@ static void tinyusb_on_event(tinyusb_event_t *event, void *arg)
     switch (event->id) {
     case TINYUSB_EVENT_ATTACHED:
         s_usb_mounted = true;
-        s_have_mouse = false;
         ESP_LOGI(TAG, "USB attached");
         break;
     case TINYUSB_EVENT_DETACHED:
         s_usb_mounted = false;
-        s_have_mouse = false;
         ESP_LOGI(TAG, "USB detached");
         break;
     default:
@@ -170,69 +201,35 @@ static void send_mouse_segments(uint8_t buttons, int32_t dx, int32_t dy, int8_t 
     }
 }
 
+/** Scale a frame-pixel coordinate (0..res-1) to the 0..32767 HID logical range. */
+static uint16_t abs_axis_scale(uint16_t v, uint32_t res)
+{
+    if (res < 2) {
+        return 0;
+    }
+    if (v >= res) {
+        v = (uint16_t)(res - 1);
+    }
+    return (uint16_t)(((uint32_t)v * P4KVM_ABS_AXIS_MAX) / (res - 1));
+}
+
 static void process_mouse_abs(const usb_hid_q_msg_t *m)
 {
-    uint16_t x = m->u.mouse.ax;
-    uint16_t y = m->u.mouse.ay;
-    uint8_t buttons = m->u.mouse.buttons;
-    int8_t wheel = m->u.mouse.wheel;
-
-    if (x >= P4KVM_CSI_H_RES) {
-        x = P4KVM_CSI_H_RES - 1;
+    p4kvm_abs_pointer_report_t r = {
+        .buttons = m->u.mouse.buttons,
+        .x = abs_axis_scale(m->u.mouse.ax, P4KVM_CSI_H_RES),
+        .y = abs_axis_scale(m->u.mouse.ay, P4KVM_CSI_V_RES),
+        .wheel = m->u.mouse.wheel,
+    };
+    tud_hid_report(P4KVM_HID_REPORT_ID_ABS, &r, sizeof(r));
+    if (!wait_report_sent()) {
+        ESP_LOGD(TAG, "abs pointer report timeout");
     }
-    if (y >= P4KVM_CSI_V_RES) {
-        y = P4KVM_CSI_V_RES - 1;
-    }
-
-    if (!s_have_mouse) {
-        s_last_mx = x;
-        s_last_my = y;
-        s_have_mouse = true;
-        if (wheel != 0) {
-            tud_hid_mouse_report(HID_ITF_PROTOCOL_MOUSE, buttons, 0, 0, wheel, 0);
-            (void)wait_report_sent();
-        } else if (buttons != 0) {
-            tud_hid_mouse_report(HID_ITF_PROTOCOL_MOUSE, buttons, 0, 0, 0, 0);
-            (void)wait_report_sent();
-        }
-        return;
-    }
-
-    int32_t dx = (int32_t)x - (int32_t)s_last_mx;
-    int32_t dy = (int32_t)y - (int32_t)s_last_my;
-    s_last_mx = x;
-    s_last_my = y;
-
-    send_mouse_segments(buttons, dx, dy, wheel);
 }
 
 static void process_mouse_rel(const usb_hid_q_msg_t *m)
 {
-    uint8_t buttons = m->u.mouse.buttons;
-    int8_t wheel = m->u.mouse.wheel;
-    int32_t dx = (int32_t)m->u.mouse.rdx;
-    int32_t dy = (int32_t)m->u.mouse.rdy;
-
-    if (!s_have_mouse) {
-        s_have_mouse = true;
-    }
-
-    int32_t nx = (int32_t)s_last_mx + dx;
-    int32_t ny = (int32_t)s_last_my + dy;
-    if (nx < 0) {
-        nx = 0;
-    } else if (nx >= P4KVM_CSI_H_RES) {
-        nx = P4KVM_CSI_H_RES - 1;
-    }
-    if (ny < 0) {
-        ny = 0;
-    } else if (ny >= P4KVM_CSI_V_RES) {
-        ny = P4KVM_CSI_V_RES - 1;
-    }
-    s_last_mx = (uint16_t)nx;
-    s_last_my = (uint16_t)ny;
-
-    send_mouse_segments(buttons, dx, dy, wheel);
+    send_mouse_segments(m->u.mouse.buttons, (int32_t)m->u.mouse.rdx, (int32_t)m->u.mouse.rdy, m->u.mouse.wheel);
 }
 
 static void process_mouse_msg(const usb_hid_q_msg_t *m);

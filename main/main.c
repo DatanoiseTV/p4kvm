@@ -7,6 +7,7 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 
+#include "atx_ctrl.h"
 #include "capture.h"
 #include "ethernet.h"
 #include "http_server.h"
@@ -23,6 +24,7 @@ void app_main(void)
 
     ESP_ERROR_CHECK(ethernet_init());
     ESP_ERROR_CHECK(usb_hid_init());
+    ESP_ERROR_CHECK(atx_ctrl_init());
 
     g_jpeg_frame.front_idx = -1;
     g_jpeg_frame.jpeg_quality = (uint8_t)CONFIG_P4KVM_JPEG_QUALITY;

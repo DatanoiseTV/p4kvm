@@ -38,6 +38,8 @@ extern jpeg_frame_slot_t g_jpeg_frame;
 
 void jpeg_frame_stream_enter(void);
 void jpeg_frame_stream_leave(void);
+/** Number of connected /stream clients. */
+int jpeg_frame_stream_clients(void);
 /** Call after publishing a new JPEG (updates seq + notifies stream tasks). */
 void jpeg_frame_notify_new_frame(void);
 /** Caller must hold @ref jpeg_frame_slot_t.mutex. Returns -1 if no slot free yet. */

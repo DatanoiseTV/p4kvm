@@ -1,7 +1,9 @@
 set(p4kvm_capture_srcs
+    "atx_ctrl.c"
     "capture.c"
     "capture_hw.c"
     "capture_mjpeg.c"
+    "capture_testpat.c"
     "http_server.c"
     "ethernet.c"
     "jpeg_frame.c"
@@ -30,7 +32,14 @@ idf_component_register(
         esp_hw_support
         esp_psram
         esp_driver_jpeg
+        esp_driver_bitscrambler
         esp_mm
         esp_timer
+        mbedtls
         espressif__esp_tinyusb
 )
+
+if(CONFIG_P4KVM_PIPELINE_YUV422_BS)
+    # Assembles uyvy_to_yvyu.bsasm and embeds it as bitscrambler_program_uyvy_to_yvyu.
+    target_bitscrambler_add_src("uyvy_to_yvyu.bsasm")
+endif()

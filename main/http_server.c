@@ -11,16 +11,114 @@
 #include <sys/socket.h>
 
 #include "esp_err.h"
+#include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "lwip/sockets.h"
+#include "sdkconfig.h"
 
+#if CONFIG_P4KVM_AUTH_ENABLE
+#include "mbedtls/base64.h"
+#endif
+
+#include "atx_ctrl.h"
 #include "jpeg_frame.h"
 #include "usb_hid.h"
+#include "video_stats.h"
 
 static const char *TAG = "p4kvm";
+
+/**
+ * Disable Nagle on a session socket. The MJPEG stream sends header + JPEG +
+ * trailer as separate chunks per frame; with Nagle the small trailing chunks
+ * sit in the stack until the previous segment is ACKed, adding up to an RTT
+ * of latency per frame. HID input on /ws wants the same treatment.
+ */
+static void sock_set_nodelay(httpd_req_t *req)
+{
+    int fd = httpd_req_to_sockfd(req);
+    if (fd >= 0) {
+        int one = 1;
+        if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) != 0) {
+            ESP_LOGW(TAG, "TCP_NODELAY fd %d: errno %d", fd, errno);
+        }
+    }
+}
+
+#if CONFIG_P4KVM_AUTH_ENABLE
+/**
+ * HTTP Basic auth. Base64 credentials over plain HTTP are an access hurdle,
+ * not transport security - the README still mandates a VPN.
+ */
+static bool auth_ok(httpd_req_t *req)
+{
+    static const char pass[] = CONFIG_P4KVM_AUTH_PASS;
+    if (pass[0] == '\0') {
+        return true; /* Half-configured build: fail open rather than brick access. */
+    }
+    char hdr[192];
+    if (httpd_req_get_hdr_value_str(req, "Authorization", hdr, sizeof(hdr)) != ESP_OK) {
+        return false;
+    }
+    if (strncasecmp(hdr, "Basic ", 6) != 0) {
+        return false;
+    }
+    unsigned char decoded[128];
+    size_t dlen = 0;
+    if (mbedtls_base64_decode(decoded, sizeof(decoded) - 1, &dlen, (const unsigned char *)hdr + 6,
+                              strlen(hdr + 6)) != 0) {
+        return false;
+    }
+    decoded[dlen] = '\0';
+    char expected[160];
+    int n = snprintf(expected, sizeof(expected), "%s:%s", CONFIG_P4KVM_AUTH_USER, pass);
+    if (n <= 0 || n >= (int)sizeof(expected)) {
+        return false;
+    }
+    /* Constant-time over the expected length; length mismatch folded into the accumulator. */
+    unsigned char diff = (dlen == (size_t)n) ? 0u : 1u;
+    for (int i = 0; i < n; i++) {
+        unsigned char b = ((size_t)i < dlen) ? decoded[i] : 0u;
+        diff |= (unsigned char)(expected[i] ^ b);
+    }
+    return diff == 0u;
+}
+
+static esp_err_t auth_reject(httpd_req_t *req)
+{
+    httpd_resp_set_status(req, "401 Unauthorized");
+    httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"p4kvm\"");
+    return httpd_resp_send(req, "unauthorized", HTTPD_RESP_USE_STRLEN);
+}
+
+#if !CONFIG_HTTPD_WS_PRE_HANDSHAKE_CB_SUPPORT
+#error "P4KVM_AUTH_ENABLE needs CONFIG_HTTPD_WS_PRE_HANDSHAKE_CB_SUPPORT (see sdkconfig.defaults)"
+#endif
+
+/**
+ * esp_http_server completes the 101 WebSocket upgrade BEFORE invoking the URI
+ * handler (httpd_uri.c), so auth inside the handler would run too late - an
+ * unauthenticated client would already hold an upgraded socket. This callback
+ * runs before the handshake; non-OK drops the connection without upgrading.
+ */
+static esp_err_t ws_auth_pre_handshake(httpd_req_t *req)
+{
+    return auth_ok(req) ? ESP_OK : ESP_FAIL;
+}
+
+#define AUTH_GATE(req)                                                                                                \
+    do {                                                                                                              \
+        if (!auth_ok(req)) {                                                                                          \
+            return auth_reject(req);                                                                                  \
+        }                                                                                                             \
+    } while (0)
+#else
+#define AUTH_GATE(req) do { } while (0)
+#endif
 
 static void stream_release_slot_ref(int slot)
 {
@@ -78,6 +176,9 @@ static void ws_take_session(httpd_req_t *req)
 static esp_err_t ws_input_handler(httpd_req_t *req)
 {
     if (req->method == HTTP_GET) {
+        /* Auth already enforced by ws_auth_pre_handshake (the upgrade happens
+         * before this handler runs, so a gate here would be too late). */
+        sock_set_nodelay(req);
         ws_take_session(req);
         return ESP_OK;
     }
@@ -152,6 +253,7 @@ static esp_err_t ws_input_handler(httpd_req_t *req)
 
 static esp_err_t root_get(httpd_req_t *req)
 {
+    AUTH_GATE(req);
     const size_t len = (size_t)(index_html_end - index_html_start);
     httpd_resp_set_type(req, "text/html");
     return httpd_resp_send(req, index_html_start, len);
@@ -165,9 +267,77 @@ static esp_err_t favicon_get(httpd_req_t *req)
     return httpd_resp_send(req, favicon_ico_start, len);
 }
 
+/** GET /stats: pipeline counters as JSON for the UI overlay and A/B tuning. */
+static esp_err_t stats_get(httpd_req_t *req)
+{
+    AUTH_GATE(req);
+    char body[512];
+    uint32_t cap_x10 = g_video_stats.cap_fps_x10;
+    uint32_t enc_x10 = g_video_stats.enc_fps_x10;
+    int n = snprintf(body, sizeof(body),
+                     "{\"pipeline\":\"%s\",\"cap_fps\":%u.%u,\"enc_fps\":%u.%u,"
+                     "\"bs_us\":%u,\"enc_us\":%u,\"jpeg_bytes\":%u,\"quality\":%u,"
+                     "\"clients\":%d,\"hdmi_locked\":%s,\"sys_status\":%u,"
+                     "\"cap_frames\":%u,\"enc_frames\":%u,\"enc_errors\":%u,\"recoveries\":%u,"
+                     "\"atx_power\":%s,\"atx_reset\":%s,"
+                     "\"uptime_s\":%lld,\"heap_free\":%u,\"psram_free\":%u}",
+                     video_stats_pipeline_name(), (unsigned)(cap_x10 / 10u), (unsigned)(cap_x10 % 10u),
+                     (unsigned)(enc_x10 / 10u), (unsigned)(enc_x10 % 10u), (unsigned)g_video_stats.bs_us,
+                     (unsigned)g_video_stats.enc_us, (unsigned)g_video_stats.jpeg_bytes,
+                     (unsigned)g_jpeg_frame.jpeg_quality, jpeg_frame_stream_clients(),
+                     g_video_stats.hdmi_locked ? "true" : "false", (unsigned)g_video_stats.sys_status,
+                     (unsigned)g_video_stats.cap_frames, (unsigned)g_video_stats.enc_frames,
+                     (unsigned)g_video_stats.enc_errors, (unsigned)g_video_stats.recoveries,
+                     atx_ctrl_power_available() ? "true" : "false", atx_ctrl_reset_available() ? "true" : "false",
+                     (long long)(esp_timer_get_time() / 1000000),
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    if (n <= 0 || n >= (int)sizeof(body)) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "stats");
+    }
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, body, (size_t)n);
+}
+
+/** POST /atx?op=power|power_hold|reset - front-panel button press. */
+static esp_err_t atx_post(httpd_req_t *req)
+{
+    AUTH_GATE(req);
+    char query[64];
+    char op[24] = {0};
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+        httpd_query_key_value(query, "op", op, sizeof(op)) != ESP_OK) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing op");
+    }
+    atx_op_t kind;
+    if (strcmp(op, "power") == 0) {
+        kind = ATX_OP_POWER_TAP;
+    } else if (strcmp(op, "power_hold") == 0) {
+        kind = ATX_OP_POWER_HOLD;
+    } else if (strcmp(op, "reset") == 0) {
+        kind = ATX_OP_RESET_TAP;
+    } else {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "unknown op");
+    }
+    esp_err_t er = atx_ctrl_press(kind);
+    if (er == ESP_ERR_NOT_SUPPORTED) {
+        return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "ATX GPIO not configured");
+    }
+    if (er == ESP_ERR_INVALID_STATE) {
+        return httpd_resp_send_custom_err(req, "409 Conflict", "press in progress");
+    }
+    if (er != ESP_OK) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(er));
+    }
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_sendstr(req, "ok\n");
+}
+
 /** GET /jpeg-quality optional query `q=1..100` sets quality; response body is current quality (text/plain). */
 static esp_err_t jpeg_quality_get(httpd_req_t *req)
 {
+    AUTH_GATE(req);
     char query[96];
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
         char val[8];
@@ -222,6 +392,7 @@ static void stream_worker_task(void *arg)
     httpd_req_t *req = (httpd_req_t *)arg;
     char hdr[96];
 
+    sock_set_nodelay(req);
     jpeg_frame_stream_enter();
     /* Wait for the next camera frame after connect, avoids replaying one stale JPEG in a tight loop. */
     uint32_t last_seq = g_jpeg_frame.frame_seq;
@@ -336,6 +507,7 @@ static void stream_worker_task(void *arg)
 
 static esp_err_t stream_get(httpd_req_t *req)
 {
+    AUTH_GATE(req);
     if (!g_jpeg_frame.jpeg_buf[0] || !g_jpeg_frame.jpeg_buf[1] || !g_jpeg_frame.jpeg_buf[2] ||
         !g_jpeg_frame.xmit_mutex || !g_jpeg_frame.frame_ready_sem) {
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "camera starting");
@@ -407,12 +579,19 @@ httpd_handle_t http_server_start(void)
     httpd_register_uri_handler(h, &u_stream);
     httpd_uri_t u_jpeg_q = {.uri = "/jpeg-quality", .method = HTTP_GET, .handler = jpeg_quality_get};
     httpd_register_uri_handler(h, &u_jpeg_q);
+    httpd_uri_t u_stats = {.uri = "/stats", .method = HTTP_GET, .handler = stats_get};
+    httpd_register_uri_handler(h, &u_stats);
+    httpd_uri_t u_atx = {.uri = "/atx", .method = HTTP_POST, .handler = atx_post};
+    httpd_register_uri_handler(h, &u_atx);
     httpd_uri_t u_ws = {
         .uri = "/ws",
         .method = HTTP_GET,
         .handler = ws_input_handler,
         .user_ctx = NULL,
         .is_websocket = true,
+#if CONFIG_P4KVM_AUTH_ENABLE
+        .ws_pre_handshake_cb = ws_auth_pre_handshake,
+#endif
     };
     httpd_register_uri_handler(h, &u_ws);
     return h;

@@ -12,7 +12,11 @@
 static void camera_task(void *arg)
 {
     (void)arg;
+#if CONFIG_P4KVM_TEST_PATTERN
+    capture_ctx_t *ctx = capture_testpat_init_start();
+#else
     capture_ctx_t *ctx = capture_hw_init_start();
+#endif
     if (!ctx) {
         return;
     }

@@ -12,6 +12,89 @@ menu "P4KVM HDMI → CSI"
         range 1 100
         default 70
 
+    choice P4KVM_VIDEO_PIPELINE
+        prompt "CSI capture pixel pipeline"
+        default P4KVM_PIPELINE_RGB888
+        help
+            RGB888: TC358743 outputs RGB888 (CSI-2 DT 0x24), 6.2 MB per 1080p
+            frame, JPEG encoder converts to 4:2:0 (smallest files on the wire).
+
+            YUV422 + BitScrambler: TC358743 outputs UYVY422 (DT 0x1E), 4.1 MB
+            per frame (one third less MIPI and CSI-DMA bandwidth). The ESP32-P4
+            JPEG encoder only accepts YVYU byte order, and the CSI bridge color
+            converter needs chip rev >= 3.0, so on rev 1.x the BitScrambler
+            peripheral reorders UYVY to YVYU via DMA (no CPU copy). Output JPEG
+            is 4:2:2, roughly 15-25 %% larger at equal quality. Compare both
+            with /stats on your setup; the bottleneck (PSRAM vs Ethernet)
+            decides which one wins.
+
+        config P4KVM_PIPELINE_RGB888
+            bool "RGB888 (JPEG 4:2:0 output)"
+
+        config P4KVM_PIPELINE_YUV422_BS
+            bool "YUV422 via BitScrambler reorder (JPEG 4:2:2 output)"
+
+    endchoice
+
+    config P4KVM_TEST_PATTERN
+        bool "Animated test pattern instead of HDMI capture"
+        default n
+        help
+            Replaces the TC358743/CSI capture with a CPU-generated animated
+            color-bar pattern (sweeping stripe, same resolution and pixel
+            format as the selected pipeline). Lets you exercise the whole
+            chain - BitScrambler reorder, hardware JPEG, HTTP streaming, web
+            UI, HID - on a bare ESP32-P4 board without the HDMI-CSI module
+            attached.
+
+    config P4KVM_ATX_POWER_GPIO
+        int "ATX power button GPIO (-1 disabled)"
+        range -1 ENV_GPIO_OUT_RANGE_MAX
+        default -1
+        help
+            Drives the PC front-panel PWR_BTN header through an optocoupler or
+            NPN transistor (never wire a GPIO to the header directly). Short
+            press taps the button (~300 ms, ACPI power event); the UI's force-
+            off holds it 5 s (ATX 4-second override).
+
+    config P4KVM_ATX_RESET_GPIO
+        int "ATX reset button GPIO (-1 disabled)"
+        range -1 ENV_GPIO_OUT_RANGE_MAX
+        default -1
+        help
+            Drives the PC front-panel RESET header (same isolation rules as
+            the power button).
+
+    config P4KVM_ATX_ACTIVE_HIGH
+        bool "ATX press drives GPIO high"
+        default y
+        depends on P4KVM_ATX_POWER_GPIO >= 0 || P4KVM_ATX_RESET_GPIO >= 0
+        help
+            Yes for the usual NPN/optocoupler stage (GPIO high = button
+            pressed). No if your circuit inverts.
+
+    config P4KVM_AUTH_ENABLE
+        bool "Require HTTP Basic authentication"
+        default n
+        help
+            Protects all HTTP routes and the /ws input WebSocket with HTTP
+            Basic auth. Credentials travel base64-encoded over plain HTTP, so
+            this is a hurdle, not transport security: keep the device behind a
+            VPN either way.
+
+    config P4KVM_AUTH_USER
+        string "Auth username"
+        default "kvm"
+        depends on P4KVM_AUTH_ENABLE
+
+    config P4KVM_AUTH_PASS
+        string "Auth password"
+        default ""
+        depends on P4KVM_AUTH_ENABLE
+        help
+            Empty password disables the check even when auth is enabled, to
+            avoid locking yourself out with a half-configured build.
+
     config P4KVM_TC358743_ADV_DEBUG
         bool "Advanced TC358743 debugging (verbose stall / bridge logs + extra I2C reads)"
         default n

@@ -68,6 +68,18 @@ esp_err_t tc358743_init_streaming(tc358743_t *dev);
 void tc358743_set_csi_uyvy422(tc358743_t *dev, bool uyvy422);
 
 /**
+ * Store the packing choice without touching the chip; @ref tc358743_init_streaming applies it.
+ * Call between probe and init_streaming.
+ */
+void tc358743_select_csi_uyvy422(tc358743_t *dev, bool uyvy422);
+
+/**
+ * Escalated recovery: full register-level re-init (init_streaming + enable_hdmi_output).
+ * For when repeated @ref tc358743_hdmi_hotplug_reset cycles fail to bring frames back.
+ */
+esp_err_t tc358743_full_reinit(tc358743_t *dev);
+
+/**
  * Linux-style hotplug finish: enable_stream(true), ~150 ms, HPD high, then CSI_START pulse.
  * Call after esp_cam_ctlr_enable(); before esp_cam_ctlr_start() once HDMI can feed the bridge.
  */

@@ -33,6 +33,15 @@ void jpeg_frame_stream_leave(void)
     taskEXIT_CRITICAL(&s_stream_mu);
 }
 
+int jpeg_frame_stream_clients(void)
+{
+    int n;
+    taskENTER_CRITICAL(&s_stream_mu);
+    n = s_stream_clients;
+    taskEXIT_CRITICAL(&s_stream_mu);
+    return n;
+}
+
 void jpeg_frame_notify_new_frame(void)
 {
     int n;

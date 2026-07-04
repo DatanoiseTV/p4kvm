@@ -9,15 +9,16 @@
 
 #include "esp_err.h"
 
-/** Start TinyUSB composite HID (keyboard + mouse) and background report task. */
+/** Start TinyUSB composite HID (keyboard + relative mouse + absolute pointer) and report task. */
 esp_err_t usb_hid_init(void);
 
 /** USB HID connected and configured (host sees device). */
 bool usb_hid_ready(void);
 
 /**
- * Queue absolute pointer position.
- * Converts to relative segments for the boot mouse HID report.
+ * Queue an absolute pointer ("virtual tablet") report.
+ * @param abs_x,abs_y frame pixels (0..P4KVM_CSI_H/V_RES-1), scaled to the 0..32767 HID range.
+ * The host places the cursor exactly there - no drift, independent of host pointer acceleration.
  */
 void usb_hid_mouse(uint8_t buttons, uint16_t abs_x, uint16_t abs_y, int8_t wheel);
 

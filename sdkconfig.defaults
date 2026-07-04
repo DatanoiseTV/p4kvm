@@ -7,6 +7,8 @@ CONFIG_P4KVM_JPEG_QUALITY=70
 
 # WebSocket /ws for browser → USB HID control plane
 CONFIG_HTTPD_WS_SUPPORT=y
+# Lets P4KVM_AUTH_ENABLE reject /ws before the 101 upgrade (handshake runs before the URI handler)
+CONFIG_HTTPD_WS_PRE_HANDSHAKE_CB_SUPPORT=y
 # Default 1024 is too small for Chromium + Vite proxy (sec-ch-ua-*, cookies) → 431 on device.
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=8192
 

@@ -1,0 +1,25 @@
+# UYVY -> YVYU byte reorder for the ESP32-P4 JPEG encoder.
+#
+# The TC358743 emits CSI-2 YUV422 8-bit as UYVY (U Y0 V Y1 in memory).
+# The P4 JPEG codec's YUV422 input is YVYU (JPEG_ENCODE_IN_FORMAT_YUV422 ==
+# ESP_COLOR_FOURCC_YVYU) and the CSI bridge color converter that could fix
+# this in-line requires chip rev >= 3.0. On rev 1.x this program does the
+# reorder as a DMA loopback pass instead: each 32-bit word is rotated right
+# by one byte (U Y0 V Y1 -> Y0 V Y1 U), no CPU involvement.
+#
+# One instruction per 32-bit word: 4 pixels-bytes per BitScrambler clock.
+
+cfg eof_on downstream
+# Prefetch loads 64 bits; we consume 32 per instruction, so on input EOF the
+# pipeline still holds 8 bytes that must be flushed downstream.
+cfg trailing_bytes 8
+cfg prefetch true
+
+loop:
+	set 0..7 8..15,
+	set 8..15 16..23,
+	set 16..23 24..31,
+	set 24..31 0..7,
+	write 32,
+	read 32,
+	jmp loop
