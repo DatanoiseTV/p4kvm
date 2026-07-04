@@ -2,6 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta http-equiv="Cache-Control" content="no-cache" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <title>p4kvm</title>
@@ -10,9 +11,18 @@
     <header class="top-bar">
       <h1 class="top-title">p4kvm</h1>
       <div class="top-right">
-        <p id="st" class="status-line">HID: connecting…</p>
-        <span id="fps-display" class="fps-display hidden">FPS: --</span>
-        <details class="gear-dd">
+        <p id="st" class="status-line">Connecting…</p>
+        <span id="fps-display" class="fps-display hidden">-- fps</span>
+        <div class="mode-seg" role="group" aria-label="Pointer mode">
+          <button type="button" id="mode-abs" class="seg-btn" title="Absolute pointer (virtual tablet): cursor follows exactly, no capture needed">Tablet</button>
+          <button type="button" id="mode-rel" class="seg-btn" title="Relative pointer: click video to lock the mouse (games, BIOS setups that ignore tablets)">Relative</button>
+        </div>
+        <button type="button" id="btn-fullscreen" class="icon-btn" title="Fullscreen" aria-label="Fullscreen">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+          </svg>
+        </button>
+        <details class="gear-dd" id="gear-dd">
           <summary class="gear-sum" title="Settings" aria-label="Settings">
             <svg
               class="gear-ico"
@@ -32,21 +42,24 @@
             </svg>
           </summary>
           <div class="gear-panel">
-            <h2 class="gear-panel-title">Settings</h2>
-            <label class="gear-field" title="Keyboard Helpers">
-              <span class="gear-label">Keyboard Helpers</span>
-            </label>
+            <h2 class="gear-panel-title">Keyboard</h2>
             <div class="gear-row">
-              <button type="button" id="btn-send-esc" disabled>Send Esc</button>
-              <button type="button" id="btn-paste-clip" disabled>
-                Paste clipboard
-              </button>
+              <button type="button" id="btn-send-esc" disabled>Esc</button>
+              <button type="button" id="btn-cad" disabled title="Send Ctrl+Alt+Del">Ctrl+Alt+Del</button>
+              <button type="button" id="btn-paste-clip" disabled>Paste clipboard</button>
             </div>
+            <h2 class="gear-panel-title" id="atx-title" hidden>Host power</h2>
+            <div class="gear-row" id="atx-row" hidden>
+              <button type="button" id="btn-atx-power" hidden title="Tap the power button (boot / soft shutdown)">Power</button>
+              <button type="button" id="btn-atx-reset" hidden title="Tap the reset button">Reset</button>
+              <button type="button" id="btn-atx-force" class="danger" hidden title="Hold power 5 s (force off)">Force off</button>
+            </div>
+            <h2 class="gear-panel-title">Video</h2>
             <label
               class="gear-field"
               title="JPEG quality 1–100 (stored on the device)."
             >
-              <span class="gear-label">Encoding Quality</span>
+              <span class="gear-label">Encoding quality</span>
               <span class="gear-ctrl">
                 <input
                   type="number"
@@ -59,44 +72,38 @@
                 <button type="button" id="btn-jpeg-q">Apply</button>
               </span>
             </label>
-             <label
-               class="gear-field"
-               title="Scales pointer-lock movement sent to the host (stored in this browser)."
-             >
-               <span class="gear-label">Pointer sensitivity</span>
-               <span class="gear-ctrl gear-ctrl-range">
-                 <input
-                   type="range"
-                   id="ptr-sens"
-                   min="25"
-                   max="300"
-                   step="5"
-                   value="100"
-                 />
-                 <span id="ptr-sens-val">100%</span>
-               </span>
-             </label>
-             <label class="gear-field" title="Display FPS counter in the status bar.">
-               <span class="gear-label">Show FPS</span>
-               <span class="gear-ctrl">
-                 <input type="checkbox" id="show-fps" />
-               </span>
-             </label>
-           </div>
+            <label class="gear-field" title="Overlay with device pipeline statistics (fps, encode time, JPEG size, link rate).">
+              <span class="gear-label">Show stats</span>
+              <span class="gear-ctrl">
+                <input type="checkbox" id="show-stats" />
+              </span>
+            </label>
+            <h2 class="gear-panel-title">Pointer</h2>
+            <label
+              class="gear-field"
+              title="Scales relative-mode movement sent to the host (stored in this browser)."
+            >
+              <span class="gear-label">Sensitivity (relative mode)</span>
+              <span class="gear-ctrl gear-ctrl-range">
+                <input
+                  type="range"
+                  id="ptr-sens"
+                  min="25"
+                  max="300"
+                  step="5"
+                  value="100"
+                />
+                <span id="ptr-sens-val">100%</span>
+              </span>
+            </label>
+          </div>
         </details>
       </div>
     </header>
-    <div class="kvm-wrap">
-      <div id="kvm-banner" class="kvm-banner" role="status">
-        Click the video below to capture the mouse and keyboard for the remote
-        host (pointer lock).
-      </div>
-      <canvas
-        id="kvm"
-        width="1920"
-        height="1080"
-        alt="KVM"
-      ></canvas>
+    <div class="kvm-wrap" id="kvm-wrap">
+      <div id="kvm-banner" class="kvm-banner" role="status"></div>
+      <div id="stats-overlay" class="stats-overlay hidden"></div>
+      <canvas id="kvm" width="1920" height="1080" tabindex="0"></canvas>
     </div>
     <script type="module" src="/src/main.js"></script>
   </body>
