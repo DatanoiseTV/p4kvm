@@ -72,3 +72,13 @@ CONFIG_SPIRAM_SPEED_200M=y
 CONFIG_LWIP_TCP_SND_BUF_DEFAULT=65535
 CONFIG_LWIP_TCP_WND_DEFAULT=65535
 CONFIG_LWIP_TCPIP_TASK_STACK_SIZE=6144
+
+# Socket-pool exhaustion guard. The browser re-fetches /stream (and reconnects
+# /ws, /serial) on any hiccup; each closed TCP then sits in TIME_WAIT. The lwIP
+# default MSL of 60 s means a closed socket is held for a full minute, so a few
+# reconnects per minute exhaust the 24-socket pool -> httpd accept() ENFILE
+# (errno 23), the whole server wedges. 5 s TIME_WAIT is ample on a LAN/tunnel
+# and lets churned sockets free almost immediately. Give the TCP PCB pool
+# headroom to match the socket count (httpd holds up to 12 + a few transient).
+CONFIG_LWIP_TCP_MSL=5000
+CONFIG_LWIP_MAX_ACTIVE_TCP=24
