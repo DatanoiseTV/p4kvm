@@ -283,6 +283,7 @@ import "./style.css";
     ["net", "LINK RATE"],
     ["quality", "QUALITY"],
     ["clients", "VIEWERS"],
+    ["vpn", "WIREGUARD"],
     ["recover", "RECOVERIES"],
     ["encerr", "ENC ERRORS"],
     ["mem", "HEAP / PSRAM"],
@@ -377,6 +378,8 @@ import "./style.css";
     dset("encfps", enc, d.enc_fps > 0 ? "ok" : "warn");
     dset("jpeg", d.jpeg_bytes ? fmtKb(d.jpeg_bytes) + " / frame" : "--");
     dset("quality", "q" + d.quality);
+    const wg = d.wg || "off";
+    dset("vpn", wg, wg === "up" ? "ok" : wg === "off" ? undefined : "warn");
     dset("clients", String(d.clients));
     dset("recover", String(d.recoveries), d.recoveries > 0 ? "warn" : undefined);
     dset("encerr", String(d.enc_errors), d.enc_errors > 0 ? "err" : undefined);

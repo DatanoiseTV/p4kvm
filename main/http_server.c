@@ -30,6 +30,7 @@
 #include "jpeg_frame.h"
 #include "usb_hid.h"
 #include "video_stats.h"
+#include "wireguard_net.h"
 
 static const char *TAG = "p4kvm";
 
@@ -304,7 +305,7 @@ static esp_err_t stats_get(httpd_req_t *req)
                      "\"bs_us\":%u,\"enc_us\":%u,\"jpeg_bytes\":%u,\"quality\":%u,"
                      "\"clients\":%d,\"hdmi_locked\":%s,\"sys_status\":%u,"
                      "\"cap_frames\":%u,\"enc_frames\":%u,\"enc_errors\":%u,\"recoveries\":%u,"
-                     "\"atx_power\":%s,\"atx_reset\":%s,\"usb_hid\":%s%s,"
+                     "\"atx_power\":%s,\"atx_reset\":%s,\"usb_hid\":%s,\"wg\":\"%s\"%s,"
                      "\"uptime_s\":%lld,\"heap_free\":%u,\"psram_free\":%u}",
                      video_stats_pipeline_name(), (unsigned)(cap_x10 / 10u), (unsigned)(cap_x10 % 10u),
                      (unsigned)(enc_x10 / 10u), (unsigned)(enc_x10 % 10u), (unsigned)g_video_stats.bs_us,
@@ -314,7 +315,8 @@ static esp_err_t stats_get(httpd_req_t *req)
                      (unsigned)g_video_stats.cap_frames, (unsigned)g_video_stats.enc_frames,
                      (unsigned)g_video_stats.enc_errors, (unsigned)g_video_stats.recoveries,
                      atx_ctrl_power_available() ? "true" : "false", atx_ctrl_reset_available() ? "true" : "false",
-                     usb_hid_ready() ? "true" : "false", ips, (long long)(esp_timer_get_time() / 1000000),
+                     usb_hid_ready() ? "true" : "false", wireguard_net_status_str(), ips,
+                     (long long)(esp_timer_get_time() / 1000000),
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     if (n <= 0 || n >= (int)sizeof(body)) {

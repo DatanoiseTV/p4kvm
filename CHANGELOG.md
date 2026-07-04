@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format follows
 ## [0.2.0] - 2026-07-04
 
 ### Added
+- WireGuard client (`P4KVM_WG_ENABLE`, trombik/esp_wireguard - same
+  wireguard-lwip core as ciniml's Arduino port): key/endpoint config in
+  menuconfig, waits for IP + NTP sync, supervises the handshake and
+  reconnects when stale, state surfaced in /stats and the diagnostics
+  panel. Tunnel throughput is software-crypto-bound (unmeasured).
+- WiFi reliability: reconnect moved off the event-loop task onto a
+  one-shot timer with exponential backoff (0.5-8 s), all-channel scan
+  with strongest-BSS selection, in-supplicant quick retries, and power
+  save re-asserted off after every association.
 - WiFi station support (`P4KVM_WIFI_ENABLE`): the P4 has no radio, so the
   onboard companion chip (ESP32-C6 on the P4-nano) is driven over SDIO via
   esp_wifi_remote + esp_hosted. Coexists with Ethernet; mDNS announces on

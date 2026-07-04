@@ -15,6 +15,7 @@
 #include "net_common.h"
 #include "usb_hid.h"
 #include "wifi_net.h"
+#include "wireguard_net.h"
 
 void app_main(void)
 {
@@ -28,6 +29,7 @@ void app_main(void)
     ESP_ERROR_CHECK(ethernet_init());
     ESP_ERROR_CHECK(wifi_net_init());
     net_mdns_init();
+    ESP_ERROR_CHECK(wireguard_net_start());
     ESP_ERROR_CHECK(usb_hid_init());
     ESP_ERROR_CHECK(atx_ctrl_init());
 

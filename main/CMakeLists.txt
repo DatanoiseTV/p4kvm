@@ -8,6 +8,7 @@ set(p4kvm_capture_srcs
     "ethernet.c"
     "net_common.c"
     "wifi_net.c"
+    "wireguard_net.c"
     "jpeg_frame.c"
     "main.c"
     "tc358743.c"
@@ -40,6 +41,7 @@ idf_component_register(
         esp_timer
         mbedtls
         espressif__esp_tinyusb
+        esp_wireguard
 )
 
 # The BitScrambler reorder pass turned out to be unnecessary (the JPEG

@@ -115,13 +115,29 @@ host's standby rail, and grounds may differ. The default circuit expects
   WiFi link may not sustain - drop the JPEG quality in the UI and watch the
   stats overlay's net rate.
 
+## WireGuard
+
+Built-in WireGuard client (`menuconfig → P4KVM → Enable WireGuard tunnel`,
+lwIP implementation from trombik/esp_wireguard, the same core as ciniml's
+WireGuard-ESP32-Arduino). Configure the interface private key, peer public key,
+endpoint host/port, tunnel-local IP and optional preshared key; the tunnel comes
+up after DHCP and an NTP time sync (handshakes need wall-clock time) and is
+supervised - stale handshakes trigger an automatic reconnect. Diagnostics show
+the tunnel state (`wg` in `/stats` and the WIREGUARD row in the panel). The KVM
+is then reachable at its tunnel IP from anywhere the peer routes, which is the
+intended remote-access path instead of exposing port 80. ChaCha20-Poly1305 runs
+in software on the P4: expect tunnel throughput well below the MJPEG bitrate at
+high quality - reduce JPEG quality accordingly (unmeasured; check `/stats` and
+the link-rate readout over your tunnel).
+
 ## FAQ
 
 ### How do I access this remotely?
 
-You will need some sort of vpn, like tailscale, wireguard, etc., do not expose this
-to the public internet. `P4KVM_AUTH_ENABLE` adds HTTP Basic auth on top, but it runs
-over plain HTTP - it does not replace the VPN.
+Use the built-in WireGuard client (above) or an external VPN (tailscale,
+wireguard on your router, etc.) - do not expose this to the public internet.
+`P4KVM_AUTH_ENABLE` adds HTTP Basic auth on top, but it runs over plain HTTP -
+it does not replace the VPN.
 
 ### How do I change the resolution/framerate?
 

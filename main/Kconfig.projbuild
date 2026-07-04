@@ -72,6 +72,60 @@ menu "P4KVM HDMI → CSI"
             Yes for the usual NPN/optocoupler stage (GPIO high = button
             pressed). No if your circuit inverts.
 
+    config P4KVM_WG_ENABLE
+        bool "Enable WireGuard tunnel"
+        default n
+        help
+            Brings up a WireGuard client tunnel (lwIP implementation) once the
+            network has an IP and NTP time is synced. The KVM is then
+            reachable at the tunnel-local IP from anywhere the peer routes -
+            the intended remote-access path instead of exposing port 80.
+            All keys are base64 strings as produced by `wg genkey`/`wg pubkey`.
+
+    config P4KVM_WG_PRIVATE_KEY
+        string "Interface private key (wg genkey)"
+        default ""
+        depends on P4KVM_WG_ENABLE
+
+    config P4KVM_WG_LOCAL_IP
+        string "Tunnel-local IP address"
+        default "10.0.0.2"
+        depends on P4KVM_WG_ENABLE
+
+    config P4KVM_WG_LOCAL_NETMASK
+        string "Tunnel netmask"
+        default "255.255.255.0"
+        depends on P4KVM_WG_ENABLE
+
+    config P4KVM_WG_PEER_PUBLIC_KEY
+        string "Peer public key (wg pubkey)"
+        default ""
+        depends on P4KVM_WG_ENABLE
+
+    config P4KVM_WG_PRESHARED_KEY
+        string "Preshared key (wg genpsk, optional)"
+        default ""
+        depends on P4KVM_WG_ENABLE
+
+    config P4KVM_WG_ENDPOINT
+        string "Peer endpoint (hostname or IP)"
+        default ""
+        depends on P4KVM_WG_ENABLE
+
+    config P4KVM_WG_PORT
+        int "Peer endpoint port"
+        default 51820
+        depends on P4KVM_WG_ENABLE
+
+    config P4KVM_WG_KEEPALIVE
+        int "Persistent keepalive seconds (0 disables)"
+        range 0 65535
+        default 25
+        depends on P4KVM_WG_ENABLE
+        help
+            25 s is the conventional value to keep NAT/stateful-firewall
+            mappings alive so the peer can reach the KVM unprompted.
+
     config P4KVM_AUTH_ENABLE
         bool "Require HTTP Basic authentication"
         default n
