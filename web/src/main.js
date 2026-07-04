@@ -3,86 +3,88 @@ import "./style.css";
 (function () {
   const W = 1920,
     H = 1080;
-  const canvas = document.getElementById("kvm");
-  const kvmWrap = document.getElementById("kvm-wrap");
-  const banner = document.getElementById("kvm-banner");
-  const st = document.getElementById("st");
-  const fpsDisplay = document.getElementById("fps-display");
-  const statsOverlay = document.getElementById("stats-overlay");
-  const btnModeAbs = document.getElementById("mode-abs");
-  const btnModeRel = document.getElementById("mode-rel");
-  const btnFullscreen = document.getElementById("btn-fullscreen");
-  const btnSendEsc = document.getElementById("btn-send-esc");
-  const btnCad = document.getElementById("btn-cad");
-  const btnPasteClip = document.getElementById("btn-paste-clip");
-  const atxTitle = document.getElementById("atx-title");
-  const atxRow = document.getElementById("atx-row");
-  const btnAtxPower = document.getElementById("btn-atx-power");
-  const btnAtxReset = document.getElementById("btn-atx-reset");
-  const btnAtxForce = document.getElementById("btn-atx-force");
-  const ptrSensInput = document.getElementById("ptr-sens");
-  const ptrSensVal = document.getElementById("ptr-sens-val");
-  const jpegQInput = document.getElementById("jpeg-q");
-  const btnJpegQ = document.getElementById("btn-jpeg-q");
-  const showStatsInput = document.getElementById("show-stats");
 
-  const PTR_SENS_KEY = "p4kvm_pointer_sensitivity_pct";
-  const SHOW_STATS_KEY = "p4kvm_show_stats";
+  /* ---------------- DOM ---------------- */
+  const $ = (id) => document.getElementById(id);
+  const canvas = $("kvm");
+  const stage = $("stage");
+  const stageWrap = $("stage-wrap");
+  const statusPill = $("status");
+  const stagehint = $("stagehint");
+  const nosignal = $("nosignal");
+  const nsReason = $("ns-reason");
+  const nsHint = $("ns-hint");
+  const teleFps = $("tele-fps");
+  const teleMbps = $("tele-mbps");
+  const btnModeAbs = $("mode-abs");
+  const btnModeRel = $("mode-rel");
+  const btnFullscreen = $("btn-fullscreen");
+  const btnDrawer = $("btn-drawer");
+  const btnDrawerClose = $("btn-drawer-close");
+  const drawer = $("drawer");
+  const scrim = $("scrim");
+  const btnSendEsc = $("btn-send-esc");
+  const btnCad = $("btn-cad");
+  const btnPasteClip = $("btn-paste-clip");
+  const secPower = $("sec-power");
+  const btnAtxPower = $("btn-atx-power");
+  const btnAtxReset = $("btn-atx-reset");
+  const btnAtxForce = $("btn-atx-force");
+  const jpegQ = $("jpeg-q");
+  const qVal = $("q-val");
+  const ptrSens = $("ptr-sens");
+  const sensVal = $("sens-val");
+  const diagEl = $("diag");
+  const drFoot = $("dr-foot");
+
   const MODE_KEY = "p4kvm_pointer_mode";
+  const PTR_SENS_KEY = "p4kvm_pointer_sensitivity_pct";
 
-  function lsGet(key) {
-    try {
-      return localStorage.getItem(key);
-    } catch (e) {
-      return null;
-    }
+  function lsGet(k) {
+    try { return localStorage.getItem(k); } catch (e) { return null; }
   }
-  function lsSet(key, value) {
-    try {
-      localStorage.setItem(key, value);
-    } catch (e) {
-      /* private mode */
-    }
+  function lsSet(k, v) {
+    try { localStorage.setItem(k, v); } catch (e) { /* private mode */ }
   }
 
-  /* ------------------------------------------------------------------ */
-  /* Pointer mode: "abs" (virtual tablet, default) or "rel" (pointer lock) */
+  /* ---------------- status / hint ---------------- */
+
+  function setStatus(text, tone) {
+    statusPill.textContent = text;
+    statusPill.dataset.tone = tone || "off";
+  }
+  function setHint(text) {
+    stagehint.textContent = text || "";
+  }
+
+  /* ---------------- pointer mode ---------------- */
 
   let mode = lsGet(MODE_KEY) === "rel" ? "rel" : "abs";
 
   function pointerLockActive() {
     return document.pointerLockElement === canvas;
   }
-
   function kbdCaptured() {
-    if (mode === "rel") return pointerLockActive();
-    return document.activeElement === canvas;
+    return mode === "rel" ? pointerLockActive() : document.activeElement === canvas;
   }
 
-  function updateModeUi() {
+  function refreshInputUi() {
     btnModeAbs.classList.toggle("active", mode === "abs");
     btnModeRel.classList.toggle("active", mode === "rel");
-    canvas.classList.toggle("kbd-captured", mode === "abs" && kbdCaptured());
-    if (mode === "abs") {
-      if (kbdCaptured()) {
-        banner.classList.add("hidden");
-        setStatus("Keyboard captured — click outside the video to release");
-      } else {
-        banner.textContent =
-          "Tablet mode: move over the video to control the pointer, click it to also capture the keyboard.";
-        banner.classList.remove("hidden");
-        if (wsReady()) setStatus("Ready");
-      }
+    const captured = kbdCaptured();
+    stage.classList.toggle("captured", captured);
+    canvas.classList.toggle("pointer-locked", pointerLockActive());
+    if (!wsReady()) {
+      return; /* connection state owns the pill while the link is down */
+    }
+    if (captured) {
+      setStatus(mode === "rel" ? "LOCKED" : "CAPTURED", "cap");
+      setHint(mode === "rel" ? "Esc releases the pointer" : "keyboard captured — click outside the video to release");
     } else {
-      if (pointerLockActive()) {
-        banner.classList.add("hidden");
-        setStatus("Locked (Esc releases)");
-      } else {
-        banner.textContent =
-          "Relative mode: click the video to capture mouse and keyboard (pointer lock, Esc releases).";
-        banner.classList.remove("hidden");
-        if (wsReady()) setStatus("Ready");
-      }
+      setStatus("READY", "ok");
+      setHint(mode === "rel"
+        ? "click the video to lock pointer + keyboard"
+        : "move over the video to point · click it to capture the keyboard");
     }
   }
 
@@ -93,135 +95,53 @@ import "./style.css";
     if (document.activeElement === canvas) canvas.blur();
     mode = next;
     lsSet(MODE_KEY, mode);
-    updateModeUi();
+    refreshInputUi();
   }
 
-  btnModeAbs.addEventListener("click", function () {
-    setMode("abs");
-  });
-  btnModeRel.addEventListener("click", function () {
-    setMode("rel");
-  });
+  btnModeAbs.addEventListener("click", () => setMode("abs"));
+  btnModeRel.addEventListener("click", () => setMode("rel"));
 
-  function setStatus(text) {
-    st.textContent = text;
+  /* ---------------- drawer ---------------- */
+
+  function drawerOpen(open) {
+    drawer.classList.toggle("open", open);
+    drawer.setAttribute("aria-hidden", String(!open));
+    btnDrawer.setAttribute("aria-expanded", String(open));
+    scrim.hidden = !open;
   }
+  btnDrawer.addEventListener("click", () => drawerOpen(!drawer.classList.contains("open")));
+  btnDrawerClose.addEventListener("click", () => drawerOpen(false));
+  scrim.addEventListener("click", () => drawerOpen(false));
 
-  /* ------------------------------------------------------------------ */
-  /* Settings persistence                                                */
+  /* ---------------- client telemetry ---------------- */
 
-  (function initPointerSensUi() {
-    let pct = 100;
-    const s = lsGet(PTR_SENS_KEY);
-    if (s !== null) {
-      const n = parseInt(s, 10);
-      if (!isNaN(n)) pct = Math.max(25, Math.min(300, n));
-    }
-    ptrSensInput.value = String(pct);
-    ptrSensVal.textContent = pct + "%";
-    ptrSensInput.addEventListener("input", function () {
-      ptrSensVal.textContent = parseInt(ptrSensInput.value, 10) + "%";
-    });
-    ptrSensInput.addEventListener("change", function () {
-      lsSet(PTR_SENS_KEY, String(parseInt(ptrSensInput.value, 10)));
-    });
-  })();
-
-  function pointerSensitivityMult() {
-    return parseInt(ptrSensInput.value, 10) / 100;
-  }
-
-  /* ------------------------------------------------------------------ */
-  /* Stats: client-side counters + device /stats polling                 */
-
-  let showStats = lsGet(SHOW_STATS_KEY) === "true";
   let drawFrames = 0;
   let recvBytes = 0;
-  let clientFps = 0;
-  let clientMbps = 0;
-  let deviceStats = null;
-  let statsTimer = null;
-
-  function renderStats() {
-    if (!showStats) return;
-    fpsDisplay.textContent = clientFps + " fps";
-    let lines = ["net " + clientMbps.toFixed(1) + " Mbps"];
-    if (deviceStats) {
-      const d = deviceStats;
-      lines.push(
-        "cam " + d.cap_fps + " fps · enc " + d.enc_fps + " fps (" + (d.enc_us / 1000).toFixed(1) + " ms)" +
-          (d.bs_us > 0 ? " · reorder " + (d.bs_us / 1000).toFixed(1) + " ms" : ""),
-      );
-      lines.push(
-        "jpeg " + Math.round(d.jpeg_bytes / 1024) + " KB · q" + d.quality + " · " + d.pipeline +
-          " · hdmi " + (d.hdmi_locked ? "locked" : "NO SIGNAL") +
-          (d.recoveries ? " · rec " + d.recoveries : ""),
-      );
-    }
-    statsOverlay.textContent = lines.join("\n");
-  }
-
-  async function pollDeviceStats() {
-    try {
-      const r = await fetch("/stats", { cache: "no-store" });
-      if (r.ok) {
-        deviceStats = await r.json();
-        applyAtxAvailability(deviceStats);
-        renderStats();
-      }
-    } catch (e) {
-      /* device restarting */
-    }
-  }
+  let lastFrameAt = 0;
 
   setInterval(function () {
-    clientFps = drawFrames;
-    clientMbps = (recvBytes * 8) / 1e6;
+    teleFps.textContent = String(drawFrames);
+    teleMbps.textContent = ((recvBytes * 8) / 1e6).toFixed(1);
     drawFrames = 0;
     recvBytes = 0;
-    renderStats();
   }, 1000);
 
-  function applyShowStats(on) {
-    showStats = on;
-    fpsDisplay.classList.toggle("hidden", !on);
-    statsOverlay.classList.toggle("hidden", !on);
-    if (statsTimer) {
-      clearInterval(statsTimer);
-      statsTimer = null;
-    }
-    if (on) {
-      pollDeviceStats();
-      statsTimer = setInterval(pollDeviceStats, 2000);
-    }
-  }
-
-  showStatsInput.checked = showStats;
-  applyShowStats(showStats);
-  showStatsInput.addEventListener("change", function () {
-    lsSet(SHOW_STATS_KEY, String(showStatsInput.checked));
-    applyShowStats(showStatsInput.checked);
-  });
-
-  /* ------------------------------------------------------------------ */
-  /* MJPEG stream: incremental multipart parser + latest-frame decoding  */
+  /* ---------------- MJPEG stream engine ---------------- */
 
   const canvasCtx = canvas.getContext("2d");
   let streamAbortController = null;
-  let pendingJpeg = null; /* newest complete, not yet decoded frame */
+  let streamUp = false;
+  let pendingJpeg = null;
   let painterWake = null;
   let painterRunning = false;
 
-  /** Decode/draw loop decoupled from the network: if JPEGs arrive faster than
-   *  the browser can decode, intermediate frames are skipped (lower latency
-   *  than queueing them). */
+  /* Decode loop decoupled from the network: stale frames are replaced, not
+   * queued, so a slow decoder costs frames instead of latency. */
   async function painterLoop() {
     painterRunning = true;
     while (painterRunning) {
       if (!pendingJpeg) {
-        await new Promise(function (resolve) {
-          painterWake = resolve;
-        });
+        await new Promise((resolve) => { painterWake = resolve; });
         painterWake = null;
         continue;
       }
@@ -232,6 +152,7 @@ import "./style.css";
         canvasCtx.drawImage(bmp, 0, 0, W, H);
         bmp.close();
         drawFrames++;
+        lastFrameAt = performance.now();
       } catch (e) {
         /* corrupt frame, skip */
       }
@@ -261,13 +182,12 @@ import "./style.css";
    * Incremental multipart/x-mixed-replace parser. Headers (tiny) are
    * accumulated and scanned with a resumable offset; once Content-Length is
    * known the body bytes are written directly from each network chunk into
-   * their final buffer - each JPEG byte is copied exactly once, no growing
-   * concat buffer on the hot path.
+   * their final buffer - each JPEG byte is copied exactly once.
    */
   function createMultipartParser(onFrame) {
-    let head = new Uint8Array(0); /* partial header bytes between frames */
+    let head = new Uint8Array(0);
     let scanFrom = 0;
-    let frame = null; /* body buffer being filled */
+    let frame = null;
     let filled = 0;
 
     return function push(chunk) {
@@ -297,7 +217,6 @@ import "./style.css";
         if (hEnd < 0) {
           scanFrom = Math.max(0, head.length - HEADER_END.length + 1);
           if (head.length > 16384) {
-            /* A sane server never sends headers this long; keep the tail to resync. */
             head = head.slice(head.length - 4096);
             scanFrom = 0;
           }
@@ -313,17 +232,13 @@ import "./style.css";
           frame = new Uint8Array(len);
           filled = 0;
         }
-        /* On a malformed part (no/absurd length) the remainder just re-enters
-         * header scanning, which resyncs on the next boundary. */
-        chunk = rest;
+        chunk = rest; /* malformed part: remainder resyncs via header scan */
       }
     };
   }
 
   function sleep(ms) {
-    return new Promise(function (resolve) {
-      setTimeout(resolve, ms);
-    });
+    return new Promise((r) => setTimeout(r, ms));
   }
 
   async function startMjpegStream() {
@@ -333,10 +248,9 @@ import "./style.css";
 
     for (;;) {
       try {
-        const response = await fetch("/stream", {
-          signal: streamAbortController.signal,
-        });
+        const response = await fetch("/stream", { signal: streamAbortController.signal });
         if (!response.ok) throw new Error("stream " + response.status);
+        streamUp = true;
         const reader = response.body.getReader();
         const push = createMultipartParser(submitFrame);
         for (;;) {
@@ -350,129 +264,252 @@ import "./style.css";
       } catch (e) {
         if (streamAbortController && streamAbortController.signal.aborted) return;
       }
-      setStatus("Stream lost: reconnecting…");
+      streamUp = false;
       await sleep(1000);
     }
   }
 
-  startMjpegStream();
+  /* ---------------- device stats / diagnostics ---------------- */
 
-  /* ------------------------------------------------------------------ */
-  /* JPEG quality                                                        */
-
-  function parseJpegQualityText(t) {
-    const n = parseInt(String(t).trim(), 10);
-    if (isNaN(n) || n < 1 || n > 100) return null;
-    return n;
+  const DIAG_ROWS = [
+    ["stream", "STREAM"],
+    ["input", "INPUT LINK"],
+    ["usb", "USB HID"],
+    ["hdmi", "HDMI SOURCE"],
+    ["pipeline", "PIPELINE"],
+    ["capfps", "CAPTURE"],
+    ["encfps", "ENCODE"],
+    ["jpeg", "JPEG SIZE"],
+    ["net", "LINK RATE"],
+    ["quality", "QUALITY"],
+    ["clients", "VIEWERS"],
+    ["recover", "RECOVERIES"],
+    ["encerr", "ENC ERRORS"],
+    ["mem", "HEAP / PSRAM"],
+    ["uptime", "UPTIME"],
+    ["net-if", "ADDRESSES"],
+  ];
+  const diagDd = {};
+  for (const [key, label] of DIAG_ROWS) {
+    const row = document.createElement("div");
+    row.className = "dr";
+    const dt = document.createElement("dt");
+    dt.textContent = label;
+    const dd = document.createElement("dd");
+    dd.id = "diag-" + key;
+    row.appendChild(dt);
+    row.appendChild(dd);
+    diagEl.appendChild(row);
+    diagDd[key] = dd;
   }
 
-  async function syncJpegQualityFromDevice() {
-    try {
-      const r = await fetch("/jpeg-quality", { cache: "no-store" });
-      if (!r.ok) return;
-      const n = parseJpegQualityText(await r.text());
-      if (n !== null) jpegQInput.value = String(n);
-    } catch (e) {
-      /* device may still be starting */
+  function dset(key, text, tone) {
+    const dd = diagDd[key];
+    if (!dd) return;
+    dd.textContent = "";
+    if (tone) {
+      const dot = document.createElement("span");
+      dot.className = "dot";
+      dd.appendChild(dot);
+      dd.dataset.tone = tone;
+    } else {
+      delete dd.dataset.tone;
     }
+    dd.appendChild(document.createTextNode(text));
   }
 
-  async function applyJpegQuality() {
-    let q = parseInt(jpegQInput.value, 10);
-    if (isNaN(q)) return;
-    q = Math.max(1, Math.min(100, q));
-    jpegQInput.value = String(q);
-    try {
-      const r = await fetch("/jpeg-quality?q=" + encodeURIComponent(q), {
-        cache: "no-store",
-      });
-      if (r.ok) {
-        const n = parseJpegQualityText(await r.text());
-        if (n !== null) jpegQInput.value = String(n);
-      }
-    } catch (e) {
-      /* ignore */
-    }
+  function fmtUptime(s) {
+    if (s == null) return "--";
+    const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600),
+      m = Math.floor((s % 3600) / 60);
+    if (d) return d + "d " + h + "h";
+    if (h) return h + "h " + m + "m";
+    return m + "m " + (s % 60) + "s";
+  }
+  function fmtKb(b) {
+    return b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.round(b / 1024) + " KB";
   }
 
-  btnJpegQ.addEventListener("click", applyJpegQuality);
-  jpegQInput.addEventListener("keydown", function (ev) {
-    if (ev.key === "Enter") {
-      ev.preventDefault();
-      applyJpegQuality();
-    }
-  });
-  /* Staggered: don't add to the /stream + /ws connection burst at load. */
-  let qualitySyncTimer = setTimeout(function () {
-    qualitySyncTimer = null;
-    syncJpegQualityFromDevice();
-  }, 250);
-
-  /* ------------------------------------------------------------------ */
-  /* ATX host power buttons                                              */
-
+  let deviceStats = null;
+  let statsFresh = false;
   let atxInitDone = false;
+
   function applyAtxAvailability(d) {
     if (atxInitDone || !d) return;
     const power = !!d.atx_power;
     const reset = !!d.atx_reset;
     if (!power && !reset) return;
     atxInitDone = true;
-    atxTitle.hidden = false;
-    atxRow.hidden = false;
+    secPower.hidden = false;
     btnAtxPower.hidden = !power;
     btnAtxForce.hidden = !power;
     btnAtxReset.hidden = !reset;
   }
 
+  /** SYS_STATUS bits (TC358743): 0x01 DDC5V, 0x02 TMDS, 0x80 SYNC. */
+  function hdmiDecode(d) {
+    if (!d) return { text: "unknown", tone: "warn" };
+    if (String(d.pipeline).indexOf("testpat") >= 0) return { text: "test pattern", tone: "ok" };
+    if (d.hdmi_locked) return { text: "locked", tone: "ok" };
+    const st = d.sys_status | 0;
+    if (!(st & 0x01)) return { text: "no source (DDC 5V absent)", tone: "err" };
+    if (!(st & 0x02)) return { text: "source present, no TMDS", tone: "warn" };
+    if (!(st & 0x80)) return { text: "TMDS up, no sync", tone: "warn" };
+    return { text: "acquiring (0x" + st.toString(16) + ")", tone: "warn" };
+  }
+
+  function renderDiagnostics() {
+    dset("stream", streamUp ? "connected" : "reconnecting", streamUp ? "ok" : "err");
+    dset("input", wsReady() ? "connected" : "reconnecting", wsReady() ? "ok" : "err");
+    dset("net", teleMbps.textContent + " Mb/s · draw " + teleFps.textContent + " fps");
+    const d = deviceStats;
+    if (!d || !statsFresh) {
+      dset("hdmi", "device unreachable", "err");
+      return;
+    }
+    const hd = hdmiDecode(d);
+    dset("hdmi", hd.text, hd.tone);
+    dset("usb", d.usb_hid ? "mounted" : "not mounted", d.usb_hid ? "ok" : "warn");
+    dset("pipeline", String(d.pipeline));
+    dset("capfps", d.cap_fps + " fps", d.cap_fps > 0 ? "ok" : "warn");
+    let enc = d.enc_fps + " fps · " + (d.enc_us / 1000).toFixed(1) + " ms";
+    if (d.bs_us > 0) enc += " · reorder " + (d.bs_us / 1000).toFixed(1) + " ms";
+    dset("encfps", enc, d.enc_fps > 0 ? "ok" : "warn");
+    dset("jpeg", d.jpeg_bytes ? fmtKb(d.jpeg_bytes) + " / frame" : "--");
+    dset("quality", "q" + d.quality);
+    dset("clients", String(d.clients));
+    dset("recover", String(d.recoveries), d.recoveries > 0 ? "warn" : undefined);
+    dset("encerr", String(d.enc_errors), d.enc_errors > 0 ? "err" : undefined);
+    dset("mem", fmtKb(d.heap_free) + " / " + fmtKb(d.psram_free));
+    dset("uptime", fmtUptime(d.uptime_s));
+    const addrs = [d.ip_eth, d.ip_wifi].filter(Boolean).join(" · ");
+    dset("net-if", addrs || "--");
+    drFoot.textContent =
+      (d.hostname ? d.hostname + ".local" : "p4kvm") + " · v" + (d.version || "?") + " · " + d.pipeline;
+  }
+
+  async function pollDeviceStats() {
+    try {
+      const r = await fetch("/stats", { cache: "no-store" });
+      if (r.ok) {
+        deviceStats = await r.json();
+        statsFresh = true;
+        applyAtxAvailability(deviceStats);
+        if (!qDragging && deviceStats.quality !== parseInt(jpegQ.value, 10)) {
+          jpegQ.value = String(deviceStats.quality);
+          qVal.textContent = "q" + deviceStats.quality;
+        }
+        return;
+      }
+    } catch (e) {
+      /* device restarting / unreachable */
+    }
+    statsFresh = false;
+  }
+
+  /* ---------------- no-signal presentation ---------------- */
+
+  function noSignalReason() {
+    if (!streamUp) return { r: "STREAM OFFLINE", h: "reconnecting to the device…" };
+    const d = statsFresh ? deviceStats : null;
+    if (!d) return { r: "DEVICE UNREACHABLE", h: "the video stream is open but /stats does not answer" };
+    const hd = hdmiDecode(d);
+    if (String(d.pipeline).indexOf("testpat") >= 0 || d.hdmi_locked) {
+      if (d.cap_fps > 0 && d.enc_fps === 0)
+        return { r: "CAPTURING · ENCODER STALLED", h: "frames arrive from the source but JPEG encoding produces nothing — check the serial log" };
+      return { r: "WAITING FOR FRAMES", h: "source is up; no frames published yet" };
+    }
+    if (!(d.sys_status & 0x01))
+      return { r: "NO SOURCE · DDC +5V ABSENT", h: "no HDMI input module or no cable/host attached — connect the source, or build with the test-pattern option to run without it" };
+    return { r: hd.text.toUpperCase(), h: "source detected but not locked — the recovery ladder retries automatically (" + (d.recoveries || 0) + " so far)" };
+  }
+
+  setInterval(function () {
+    const stale = performance.now() - lastFrameAt > 2500;
+    if (stale) {
+      const { r, h } = noSignalReason();
+      nsReason.textContent = r;
+      nsHint.textContent = h;
+      nosignal.hidden = false;
+    } else {
+      nosignal.hidden = true;
+    }
+    renderDiagnostics();
+  }, 1000);
+
+  /* ---------------- quality slider ---------------- */
+
+  let qDragging = false;
+  let qDebounce = null;
+  qVal.textContent = "q" + jpegQ.value;
+  jpegQ.addEventListener("pointerdown", () => { qDragging = true; });
+  jpegQ.addEventListener("pointerup", () => { qDragging = false; });
+  jpegQ.addEventListener("input", function () {
+    qVal.textContent = "q" + jpegQ.value;
+    if (qDebounce) clearTimeout(qDebounce);
+    qDebounce = setTimeout(async function () {
+      qDebounce = null;
+      try {
+        await fetch("/jpeg-quality?q=" + encodeURIComponent(jpegQ.value), { cache: "no-store" });
+      } catch (e) { /* retried implicitly by next adjustment */ }
+    }, 300);
+  });
+
+  async function syncJpegQualityFromDevice() {
+    try {
+      const r = await fetch("/jpeg-quality", { cache: "no-store" });
+      if (!r.ok) return;
+      const n = parseInt((await r.text()).trim(), 10);
+      if (!isNaN(n) && n >= 1 && n <= 100) {
+        jpegQ.value = String(n);
+        qVal.textContent = "q" + n;
+      }
+    } catch (e) { /* device may still be starting */ }
+  }
+
+  /* ---------------- sensitivity ---------------- */
+
+  (function initSens() {
+    let pct = 100;
+    const s = lsGet(PTR_SENS_KEY);
+    if (s !== null) {
+      const n = parseInt(s, 10);
+      if (!isNaN(n)) pct = Math.max(25, Math.min(300, n));
+    }
+    ptrSens.value = String(pct);
+    sensVal.textContent = pct + "%";
+    ptrSens.addEventListener("input", function () {
+      sensVal.textContent = parseInt(ptrSens.value, 10) + "%";
+    });
+    ptrSens.addEventListener("change", function () {
+      lsSet(PTR_SENS_KEY, String(parseInt(ptrSens.value, 10)));
+    });
+  })();
+
+  function pointerSensitivityMult() {
+    return parseInt(ptrSens.value, 10) / 100;
+  }
+
+  /* ---------------- ATX ---------------- */
+
   async function atxPress(op, confirmText) {
     if (confirmText && !window.confirm(confirmText)) return;
     try {
       const r = await fetch("/atx?op=" + op, { method: "POST" });
-      if (r.ok) {
-        setStatus("ATX: " + op + " sent");
-      } else {
-        setStatus("ATX " + op + " failed: " + r.status + " " + (await r.text()).trim());
-      }
+      setHint(r.ok ? "ATX " + op + " sent" : "ATX " + op + " failed: " + r.status);
     } catch (e) {
-      setStatus("ATX " + op + " failed (network)");
+      setHint("ATX " + op + " failed (network)");
     }
   }
+  btnAtxPower.addEventListener("click", () =>
+    atxPress("power", "Tap the host power button? (boots the host or requests a soft shutdown)"));
+  btnAtxReset.addEventListener("click", () =>
+    atxPress("reset", "Reset the host? Unsaved data will be lost."));
+  btnAtxForce.addEventListener("click", () =>
+    atxPress("power_hold",
+      "FORCE POWER OFF: holds the power button for 5 seconds and cuts the host hard. Unsaved data will be lost. Continue?"));
 
-  btnAtxPower.addEventListener("click", function () {
-    atxPress("power", "Tap the host power button? (boots the host or requests a soft shutdown)");
-  });
-  btnAtxReset.addEventListener("click", function () {
-    atxPress("reset", "Reset the host? Unsaved data will be lost.");
-  });
-  btnAtxForce.addEventListener("click", function () {
-    atxPress(
-      "power_hold",
-      "FORCE POWER OFF: holds the power button for 5 seconds and cuts the host hard. Unsaved data will be lost. Continue?",
-    );
-  });
-
-  /*
-   * Probe /stats so the power section appears even with the overlay off.
-   * Delayed and retried: at page load /stream + /jpeg-quality already race a
-   * freshly booted lwIP stack, and one failed probe must not hide the ATX
-   * buttons forever.
-   */
-  let statsProbeTimer = null;
-  function scheduleStatsProbe(attempt) {
-    statsProbeTimer = setTimeout(
-      async function () {
-        statsProbeTimer = null;
-        await pollDeviceStats();
-        if (!deviceStats && attempt < 6) scheduleStatsProbe(attempt + 1);
-      },
-      attempt === 0 ? 800 : 3000,
-    );
-  }
-  scheduleStatsProbe(0);
-
-  /* ------------------------------------------------------------------ */
-  /* WebSocket input channel                                             */
+  /* ---------------- WebSocket input ---------------- */
 
   const proto = location.protocol === "https:" ? "wss" : "ws";
   let ws = null;
@@ -484,85 +521,31 @@ import "./style.css";
 
   const CODE_TO_HID = (function () {
     const m = {};
-    for (let i = 0; i < 26; i++) {
-      m["Key" + String.fromCharCode(65 + i)] = 0x04 + i;
-    }
-    const digits = [
-      ["Digit1", 0x1e],
-      ["Digit2", 0x1f],
-      ["Digit3", 0x20],
-      ["Digit4", 0x21],
-      ["Digit5", 0x22],
-      ["Digit6", 0x23],
-      ["Digit7", 0x24],
-      ["Digit8", 0x25],
-      ["Digit9", 0x26],
-      ["Digit0", 0x27],
-    ];
-    for (const [c, v] of digits) m[c] = v;
-    const extra = [
-      ["Enter", 0x28],
-      ["Escape", 0x29],
-      ["Backspace", 0x2a],
-      ["Tab", 0x2b],
-      ["Space", 0x2c],
-      ["Minus", 0x2d],
-      ["Equal", 0x2e],
-      ["BracketLeft", 0x2f],
-      ["BracketRight", 0x30],
-      ["Backslash", 0x31],
-      ["Semicolon", 0x33],
-      ["Quote", 0x34],
-      ["Backquote", 0x35],
-      ["Comma", 0x36],
-      ["Period", 0x37],
-      ["Slash", 0x38],
-      ["CapsLock", 0x39],
-      ["F1", 0x3a],
-      ["F2", 0x3b],
-      ["F3", 0x3c],
-      ["F4", 0x3d],
-      ["F5", 0x3e],
-      ["F6", 0x3f],
-      ["F7", 0x40],
-      ["F8", 0x41],
-      ["F9", 0x42],
-      ["F10", 0x43],
-      ["F11", 0x44],
-      ["F12", 0x45],
-      ["PrintScreen", 0x46],
-      ["ScrollLock", 0x47],
-      ["Pause", 0x48],
-      ["Insert", 0x49],
-      ["Home", 0x4a],
-      ["PageUp", 0x4b],
-      ["Delete", 0x4c],
-      ["End", 0x4d],
-      ["PageDown", 0x4e],
-      ["ArrowRight", 0x4f],
-      ["ArrowLeft", 0x50],
-      ["ArrowDown", 0x51],
-      ["ArrowUp", 0x52],
-      ["NumLock", 0x53],
-      ["NumpadDivide", 0x54],
-      ["NumpadMultiply", 0x55],
-      ["NumpadSubtract", 0x56],
-      ["NumpadAdd", 0x57],
-      ["NumpadEnter", 0x58],
-      ["Numpad1", 0x59],
-      ["Numpad2", 0x5a],
-      ["Numpad3", 0x5b],
-      ["Numpad4", 0x5c],
-      ["Numpad5", 0x5d],
-      ["Numpad6", 0x5e],
-      ["Numpad7", 0x5f],
-      ["Numpad8", 0x60],
-      ["Numpad9", 0x61],
-      ["Numpad0", 0x62],
-      ["NumpadDecimal", 0x63],
+    for (let i = 0; i < 26; i++) m["Key" + String.fromCharCode(65 + i)] = 0x04 + i;
+    const table = [
+      ["Digit1", 0x1e], ["Digit2", 0x1f], ["Digit3", 0x20], ["Digit4", 0x21],
+      ["Digit5", 0x22], ["Digit6", 0x23], ["Digit7", 0x24], ["Digit8", 0x25],
+      ["Digit9", 0x26], ["Digit0", 0x27],
+      ["Enter", 0x28], ["Escape", 0x29], ["Backspace", 0x2a], ["Tab", 0x2b],
+      ["Space", 0x2c], ["Minus", 0x2d], ["Equal", 0x2e], ["BracketLeft", 0x2f],
+      ["BracketRight", 0x30], ["Backslash", 0x31], ["Semicolon", 0x33],
+      ["Quote", 0x34], ["Backquote", 0x35], ["Comma", 0x36], ["Period", 0x37],
+      ["Slash", 0x38], ["CapsLock", 0x39],
+      ["F1", 0x3a], ["F2", 0x3b], ["F3", 0x3c], ["F4", 0x3d], ["F5", 0x3e],
+      ["F6", 0x3f], ["F7", 0x40], ["F8", 0x41], ["F9", 0x42], ["F10", 0x43],
+      ["F11", 0x44], ["F12", 0x45],
+      ["PrintScreen", 0x46], ["ScrollLock", 0x47], ["Pause", 0x48],
+      ["Insert", 0x49], ["Home", 0x4a], ["PageUp", 0x4b], ["Delete", 0x4c],
+      ["End", 0x4d], ["PageDown", 0x4e],
+      ["ArrowRight", 0x4f], ["ArrowLeft", 0x50], ["ArrowDown", 0x51], ["ArrowUp", 0x52],
+      ["NumLock", 0x53], ["NumpadDivide", 0x54], ["NumpadMultiply", 0x55],
+      ["NumpadSubtract", 0x56], ["NumpadAdd", 0x57], ["NumpadEnter", 0x58],
+      ["Numpad1", 0x59], ["Numpad2", 0x5a], ["Numpad3", 0x5b], ["Numpad4", 0x5c],
+      ["Numpad5", 0x5d], ["Numpad6", 0x5e], ["Numpad7", 0x5f], ["Numpad8", 0x60],
+      ["Numpad9", 0x61], ["Numpad0", 0x62], ["NumpadDecimal", 0x63],
       ["ContextMenu", 0x65],
     ];
-    for (const [c, v] of extra) m[c] = v;
+    for (const [c, v] of table) m[c] = v;
     return m;
   })();
 
@@ -604,76 +587,47 @@ import "./style.css";
   }
 
   const MOD_ONLY = new Set([
-    "ControlLeft",
-    "ControlRight",
-    "ShiftLeft",
-    "ShiftRight",
-    "AltLeft",
-    "AltRight",
-    "MetaLeft",
-    "MetaRight",
+    "ControlLeft", "ControlRight", "ShiftLeft", "ShiftRight",
+    "AltLeft", "AltRight", "MetaLeft", "MetaRight",
   ]);
 
   const HID_SHIFT = 0x02;
 
   function tapKey(mod, hid) {
     sendRawKeyboard(mod, hid ? [hid] : []);
-    setTimeout(function () {
-      sendRawKeyboard(0, []);
-    }, 28);
+    setTimeout(() => sendRawKeyboard(0, []), 28);
   }
 
   /** US QWERTY: printable ASCII → { mod, hid } for paste (unknown chars skipped). */
   const PASTE_CHAR_TO_HID = (function () {
     const m = {};
     const SH = HID_SHIFT;
-    function add(ch, mod, hid) {
-      m[ch] = { mod: mod, hid: hid };
-    }
+    const add = (ch, mod, hid) => { m[ch] = { mod, hid }; };
     for (let i = 0; i < 26; i++) {
       add(String.fromCharCode(97 + i), 0, 0x04 + i);
       add(String.fromCharCode(65 + i), SH, 0x04 + i);
     }
     const dk = [0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27];
     const digs = "1234567890";
-    for (let i = 0; i < 10; i++) add(digs[i], 0, dk[i]);
     const shifted = ")!@#$%^&*(";
-    for (let i = 0; i < 10; i++) add(shifted[i], SH, dk[i]);
-    add(" ", 0, 0x2c);
-    add("\n", 0, 0x28);
-    add("\r", 0, 0x28);
-    add("\t", 0, 0x2b);
-    add("-", 0, 0x2d);
-    add("_", SH, 0x2d);
-    add("=", 0, 0x2e);
-    add("+", SH, 0x2e);
-    add("[", 0, 0x2f);
-    add("{", SH, 0x2f);
-    add("]", 0, 0x30);
-    add("}", SH, 0x30);
-    add("\\", 0, 0x31);
-    add("|", SH, 0x31);
-    add(";", 0, 0x33);
-    add(":", SH, 0x33);
-    add("'", 0, 0x34);
-    add('"', SH, 0x34);
-    add("`", 0, 0x35);
-    add("~", SH, 0x35);
-    add(",", 0, 0x36);
-    add("<", SH, 0x36);
-    add(".", 0, 0x37);
-    add(">", SH, 0x37);
-    add("/", 0, 0x38);
-    add("?", SH, 0x38);
+    for (let i = 0; i < 10; i++) {
+      add(digs[i], 0, dk[i]);
+      add(shifted[i], SH, dk[i]);
+    }
+    add(" ", 0, 0x2c); add("\n", 0, 0x28); add("\r", 0, 0x28); add("\t", 0, 0x2b);
+    add("-", 0, 0x2d); add("_", SH, 0x2d); add("=", 0, 0x2e); add("+", SH, 0x2e);
+    add("[", 0, 0x2f); add("{", SH, 0x2f); add("]", 0, 0x30); add("}", SH, 0x30);
+    add("\\", 0, 0x31); add("|", SH, 0x31); add(";", 0, 0x33); add(":", SH, 0x33);
+    add("'", 0, 0x34); add('"', SH, 0x34); add("`", 0, 0x35); add("~", SH, 0x35);
+    add(",", 0, 0x36); add("<", SH, 0x36); add(".", 0, 0x37); add(">", SH, 0x37);
+    add("/", 0, 0x38); add("?", SH, 0x38);
     return m;
   })();
 
   async function typeStringAsHid(text) {
     for (let i = 0; i < text.length; i++) {
       const ch = text.charAt(i);
-      if (ch === "\r" && text.charAt(i + 1) === "\n") {
-        continue;
-      }
+      if (ch === "\r" && text.charAt(i + 1) === "\n") continue;
       const row = PASTE_CHAR_TO_HID[ch];
       if (!row) continue;
       sendRawKeyboard(row.mod, [row.hid]);
@@ -691,40 +645,30 @@ import "./style.css";
   }
 
   btnSendEsc.addEventListener("click", function () {
-    if (!wsReady()) return;
-    tapKey(0, 0x29);
+    if (wsReady()) tapKey(0, 0x29);
   });
-
   btnCad.addEventListener("click", function () {
-    if (!wsReady()) return;
     /* Ctrl (0x01) + Alt (0x04) + Delete (0x4c) */
-    tapKey(0x05, 0x4c);
+    if (wsReady()) tapKey(0x05, 0x4c);
   });
-
   btnPasteClip.addEventListener("click", function () {
     if (!wsReady()) return;
     if (!navigator.clipboard || !navigator.clipboard.readText) {
-      setStatus("Clipboard API unavailable (use HTTPS or localhost)");
+      setHint("clipboard API unavailable (use HTTPS or localhost)");
       return;
     }
     btnPasteClip.disabled = true;
     navigator.clipboard
       .readText()
-      .then(function (text) {
-        return typeStringAsHid(text);
-      })
-      .then(function () {
+      .then((text) => typeStringAsHid(text))
+      .catch(() => setHint("clipboard read denied (grant permission / use HTTPS)"))
+      .finally(() => {
         updateHidToolButtons();
-        updateModeUi();
-      })
-      .catch(function () {
-        setStatus("Clipboard read denied or failed (grant permission / use HTTPS)");
-        updateHidToolButtons();
+        refreshInputUi();
       });
   });
 
-  /* ------------------------------------------------------------------ */
-  /* Keyboard capture                                                    */
+  /* ---------------- keyboard capture ---------------- */
 
   function onKeyDown(ev) {
     if (!kbdCaptured()) return;
@@ -734,8 +678,7 @@ import "./style.css";
       return;
     }
     /* Esc in relative mode: the browser exits pointer lock regardless, but the
-     * key-down is still forwarded so the host receives a real Esc tap; the
-     * pointerlockchange handler sends all-keys-up right after. */
+     * key-down still reaches the host; pointerlockchange sends all-keys-up. */
     const h = CODE_TO_HID[ev.code];
     if (h === undefined) return;
     ev.preventDefault();
@@ -760,71 +703,57 @@ import "./style.css";
   window.addEventListener("keydown", onKeyDown, true);
   window.addEventListener("keyup", onKeyUp, true);
   window.addEventListener("blur", function () {
-    if (HELD.size === 0) return;
-    releaseAllKeys();
+    if (HELD.size > 0) releaseAllKeys();
   });
 
-  canvas.addEventListener("focus", updateModeUi);
+  canvas.addEventListener("focus", refreshInputUi);
   canvas.addEventListener("blur", function () {
     if (mode === "abs" && HELD.size > 0) releaseAllKeys();
-    updateModeUi();
+    refreshInputUi();
   });
 
-  /* ------------------------------------------------------------------ */
-  /* Mouse handling                                                      */
+  /* ---------------- mouse ---------------- */
 
-  /** Last pointer position in frame pixels (rel-mode virtual position and
-   *  button release fallback). */
   let lastX = 0,
     lastY = 0;
 
   function scaleMovementToFrame() {
     const r = canvas.getBoundingClientRect();
-    if (r.width <= 0 || r.height <= 0) {
-      return { sx: 1, sy: 1 };
-    }
+    if (r.width <= 0 || r.height <= 0) return { sx: 1, sy: 1 };
     return { sx: (W - 1) / r.width, sy: (H - 1) / r.height };
   }
 
-  /** Update lastX/lastY from pointer-lock mickeys (matches scaled deltas sent over WS). */
   function applyRelativeFromEvent(ev) {
-    const mx = ev.movementX || 0;
-    const my = ev.movementY || 0;
     const { sx, sy } = scaleMovementToFrame();
     const sens = pointerSensitivityMult();
-    const rdx = Math.round(mx * sx * sens);
-    const rdy = Math.round(my * sy * sens);
-    let x = lastX + rdx;
-    let y = lastY + rdy;
-    if (x < 0) x = 0;
-    if (y < 0) y = 0;
-    if (x >= W) x = W - 1;
-    if (y >= H) y = H - 1;
-    lastX = x;
-    lastY = y;
+    const rdx = Math.round((ev.movementX || 0) * sx * sens);
+    const rdy = Math.round((ev.movementY || 0) * sy * sens);
+    lastX = Math.max(0, Math.min(W - 1, lastX + rdx));
+    lastY = Math.max(0, Math.min(H - 1, lastY + rdy));
     return { rdx, rdy };
   }
 
   let wasPointerLocked = false;
-
-  function onPointerLockChange() {
+  document.addEventListener("pointerlockchange", function () {
     const locked = pointerLockActive();
-    if (wasPointerLocked && !locked) {
-      releaseAllKeys();
-    }
+    if (wasPointerLocked && !locked) releaseAllKeys();
     wasPointerLocked = locked;
-    canvas.classList.toggle("pointer-locked", locked);
-    updateModeUi();
-  }
-
-  document.addEventListener("pointerlockchange", onPointerLockChange);
+    refreshInputUi();
+  });
   document.addEventListener("pointerlockerror", function () {
-    updateModeUi();
-    setStatus("Pointer lock failed (try HTTPS, or another browser)");
+    refreshInputUi();
+    setHint("pointer lock failed (try HTTPS, or another browser)");
   });
 
   let pending = null;
   let raf = 0;
+
+  function clampWheel(v) {
+    return Math.max(-127, Math.min(127, v));
+  }
+  function wheelStep(ev) {
+    return clampWheel(Math.round(-ev.deltaY / 16));
+  }
 
   function flushMouse() {
     raf = 0;
@@ -836,11 +765,9 @@ import "./style.css";
     dv.setUint8(0, 1);
     dv.setUint8(1, p.buttons);
     if (p.mode === "rel") {
-      const clamp16 = function (v) {
-        return Math.max(-32768, Math.min(32767, v));
-      };
-      dv.setInt16(2, clamp16(p.dx), true);
-      dv.setInt16(4, clamp16(p.dy), true);
+      const c16 = (v) => Math.max(-32768, Math.min(32767, v));
+      dv.setInt16(2, c16(p.dx), true);
+      dv.setInt16(4, c16(p.dy), true);
       dv.setUint8(7, 1);
     } else {
       dv.setUint16(2, p.x, true);
@@ -860,19 +787,15 @@ import "./style.css";
     flushMouse();
   }
 
-  /**
-   * Coalesce moves to one WebSocket frame per animation frame (reduces load).
-   * Always flush immediately for wheel or any button transition so clicks are not merged away.
-   */
+  /* Coalesce moves to one WS frame per animation frame; flush immediately on
+   * wheel or any button transition so clicks are never merged away. */
   function queueMouseAbs(buttons, x, y, wheel, forceImmediate) {
     flushPendingIfOtherMode("abs");
     const prev = pending;
     const btnChanged = prev !== null && prev.mode === "abs" && prev.buttons !== buttons;
     let w = wheel;
-    if (prev && prev.mode === "abs") {
-      w = clampWheel(prev.wheel + wheel);
-    }
-    pending = { mode: "abs", buttons: buttons, x: x, y: y, wheel: w };
+    if (prev && prev.mode === "abs") w = clampWheel(prev.wheel + wheel);
+    pending = { mode: "abs", buttons, x, y, wheel: w };
     if (forceImmediate || wheel !== 0 || btnChanged) {
       if (raf) {
         cancelAnimationFrame(raf);
@@ -889,13 +812,7 @@ import "./style.css";
     const prev = pending;
     const btnChanged = prev !== null && prev.mode === "rel" && prev.buttons !== buttons;
     if (!pending || pending.mode !== "rel") {
-      pending = {
-        mode: "rel",
-        buttons: buttons,
-        dx: dx,
-        dy: dy,
-        wheel: wheel,
-      };
+      pending = { mode: "rel", buttons, dx, dy, wheel };
     } else {
       pending.buttons = buttons;
       pending.dx += dx;
@@ -913,26 +830,11 @@ import "./style.css";
     if (!raf) raf = requestAnimationFrame(flushMouse);
   }
 
-  function clampWheel(v) {
-    return Math.max(-127, Math.min(127, v));
-  }
-
-  /** Wheel event → HID wheel step (shared by both pointer modes). */
-  function wheelStep(ev) {
-    return clampWheel(Math.round(-ev.deltaY / 16));
-  }
-
   function mapXY(ev) {
     const r = canvas.getBoundingClientRect();
-    let x = ev.clientX - r.left;
-    let y = ev.clientY - r.top;
     if (r.width <= 0 || r.height <= 0) return { x: 0, y: 0 };
-    x = Math.round((x / r.width) * (W - 1));
-    y = Math.round((y / r.height) * (H - 1));
-    if (x < 0) x = 0;
-    if (y < 0) y = 0;
-    if (x >= W) x = W - 1;
-    if (y >= H) y = H - 1;
+    const x = Math.max(0, Math.min(W - 1, Math.round(((ev.clientX - r.left) / r.width) * (W - 1))));
+    const y = Math.max(0, Math.min(H - 1, Math.round(((ev.clientY - r.top) / r.height) * (H - 1))));
     return { x, y };
   }
 
@@ -942,11 +844,7 @@ import "./style.css";
     if (ev.buttons & 2) b |= 2;
     if (ev.buttons & 4) b |= 4;
     /* mousedown: some engines lag updating `buttons`; use `button` for the activating click. */
-    if (
-      (ev.type === "pointerdown" || ev.type === "mousedown") &&
-      b === 0 &&
-      typeof ev.button === "number"
-    ) {
+    if ((ev.type === "pointerdown" || ev.type === "mousedown") && b === 0 && typeof ev.button === "number") {
       if (ev.button === 0) b |= 1;
       else if (ev.button === 1) b |= 4;
       else if (ev.button === 2) b |= 2;
@@ -958,8 +856,7 @@ import "./style.css";
     return !ev.pointerType || ev.pointerType === "mouse" || ev.pointerType === "pen";
   }
 
-  /* --- Tablet (absolute) mode: no capture needed, hover moves the host cursor --- */
-
+  /* Tablet (absolute) mode: hover moves the host cursor, no capture needed. */
   canvas.addEventListener("pointermove", function (ev) {
     if (mode !== "abs" || pointerLockActive() || !isMousePointer(ev)) return;
     const { x, y } = mapXY(ev);
@@ -975,31 +872,20 @@ import "./style.css";
       ev.preventDefault();
       try {
         canvas.setPointerCapture(ev.pointerId); /* keep drags outside the canvas */
-      } catch (e) {
-        /* pointer already gone */
-      }
+      } catch (e) { /* pointer already gone */ }
       const { x, y } = mapXY(ev);
       lastX = x;
       lastY = y;
       queueMouseAbs(mouseButtons(ev), x, y, 0, true);
       return;
     }
-    /* Relative mode: first click acquires the pointer lock. */
     const { x, y } = mapXY(ev);
     lastX = x;
     lastY = y;
-    if (
-      ev.button === 0 &&
-      !pointerLockActive() &&
-      typeof canvas.requestPointerLock === "function"
-    ) {
+    if (ev.button === 0 && !pointerLockActive() && typeof canvas.requestPointerLock === "function") {
       ev.preventDefault();
       const req = canvas.requestPointerLock();
-      if (req && typeof req.catch === "function") {
-        req.catch(function () {
-          /* insecure context or user gesture policy */
-        });
-      }
+      if (req && typeof req.catch === "function") req.catch(() => { /* gesture policy */ });
     }
   });
 
@@ -1012,21 +898,22 @@ import "./style.css";
     queueMouseAbs(mouseButtons(ev), x, y, 0, true);
   });
 
-  canvas.addEventListener("wheel", function (ev) {
-    if (mode !== "abs" || pointerLockActive()) return;
-    ev.preventDefault();
-    const w = wheelStep(ev);
-    if (w === 0) return;
-    const { x, y } = mapXY(ev);
-    queueMouseAbs(mouseButtons(ev), x, y, w, true);
-  }, { passive: false });
+  canvas.addEventListener(
+    "wheel",
+    function (ev) {
+      if (mode !== "abs" || pointerLockActive()) return;
+      ev.preventDefault();
+      const w = wheelStep(ev);
+      if (w === 0) return;
+      const { x, y } = mapXY(ev);
+      queueMouseAbs(mouseButtons(ev), x, y, w, true);
+    },
+    { passive: false },
+  );
 
-  canvas.addEventListener("contextmenu", function (ev) {
-    ev.preventDefault();
-  });
+  canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
 
-  /* --- Relative mode: movement and buttons are delivered on the document while locked --- */
-
+  /* Relative mode: while locked, events arrive on the document. */
   document.addEventListener("mousemove", function (ev) {
     if (!pointerLockActive()) return;
     const { rdx, rdy } = applyRelativeFromEvent(ev);
@@ -1050,19 +937,14 @@ import "./style.css";
     { passive: false },
   );
 
-  /* ------------------------------------------------------------------ */
-  /* Fullscreen                                                          */
+  /* ---------------- fullscreen ---------------- */
 
   btnFullscreen.addEventListener("click", function () {
-    if (document.fullscreenElement) {
-      document.exitFullscreen();
-    } else if (kvmWrap.requestFullscreen) {
-      kvmWrap.requestFullscreen();
-    }
+    if (document.fullscreenElement) document.exitFullscreen();
+    else if (stageWrap.requestFullscreen) stageWrap.requestFullscreen();
   });
 
-  /* ------------------------------------------------------------------ */
-  /* WebSocket lifecycle                                                 */
+  /* ---------------- WebSocket lifecycle ---------------- */
 
   function connectWs() {
     if (reconnectTimer) {
@@ -1072,14 +954,13 @@ import "./style.css";
     ws = new WebSocket(proto + "://" + location.host + "/ws");
     ws.binaryType = "arraybuffer";
     ws.onopen = function () {
-      updateModeUi();
+      refreshInputUi();
       updateHidToolButtons();
     };
     ws.onclose = function () {
-      if (pointerLockActive()) {
-        document.exitPointerLock();
-      }
-      setStatus("Input disconnected: retrying…");
+      if (pointerLockActive()) document.exitPointerLock();
+      setStatus("INPUT LINK DOWN", "err");
+      setHint("input channel reconnecting…");
       updateHidToolButtons();
       reconnectTimer = setTimeout(connectWs, 2000);
     };
@@ -1088,7 +969,32 @@ import "./style.css";
     };
   }
 
-  let initialWsTimer = null;
+  /* ---------------- boot ---------------- */
+
+  setStatus("CONNECTING", "warn");
+  startMjpegStream();
+
+  /* Stagger startup requests: a freshly booted lwIP stack resets connections
+   * when /stream, /jpeg-quality, /stats and /ws all race it at once. */
+  let qualitySyncTimer = setTimeout(function () {
+    qualitySyncTimer = null;
+    syncJpegQualityFromDevice();
+  }, 250);
+
+  let initialWsTimer = setTimeout(function () {
+    initialWsTimer = null;
+    connectWs();
+  }, 400);
+
+  let statsTimer = null;
+  let statsKickoff = setTimeout(function () {
+    statsKickoff = null;
+    pollDeviceStats();
+    statsTimer = setInterval(pollDeviceStats, 2000);
+  }, 800);
+
+  refreshInputUi();
+
   if (import.meta.hot) {
     import.meta.hot.dispose(function () {
       painterRunning = false;
@@ -1097,25 +1003,13 @@ import "./style.css";
         streamAbortController.abort();
         streamAbortController = null;
       }
-      if (initialWsTimer) {
-        clearTimeout(initialWsTimer);
-        initialWsTimer = null;
+      for (const t of [qualitySyncTimer, initialWsTimer, statsKickoff]) {
+        if (t) clearTimeout(t);
       }
-      if (statsProbeTimer) {
-        clearTimeout(statsProbeTimer);
-        statsProbeTimer = null;
-      }
-      if (qualitySyncTimer) {
-        clearTimeout(qualitySyncTimer);
-        qualitySyncTimer = null;
-      }
+      if (statsTimer) clearInterval(statsTimer);
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
-      }
-      if (statsTimer) {
-        clearInterval(statsTimer);
-        statsTimer = null;
       }
       if (ws) {
         ws.onclose = null;
@@ -1125,12 +1019,4 @@ import "./style.css";
       }
     });
   }
-
-  updateModeUi();
-
-  /* Let /stream canvas fetch and /jpeg-quality complete first; tight lwIP + httpd was seeing ECONNRESET when all three raced. */
-  initialWsTimer = setTimeout(function () {
-    initialWsTimer = null;
-    connectWs();
-  }, 400);
 })();

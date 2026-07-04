@@ -14,6 +14,7 @@
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -267,19 +268,43 @@ static esp_err_t favicon_get(httpd_req_t *req)
     return httpd_resp_send(req, favicon_ico_start, len);
 }
 
-/** GET /stats: pipeline counters as JSON for the UI overlay and A/B tuning. */
+#define P4KVM_VERSION "0.2.0"
+
+/** Append ,"key":"a.b.c.d" for a netif's IP if the interface exists and has one. */
+static int stats_append_ip(char *dst, size_t cap, const char *key, const char *ifkey)
+{
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey(ifkey);
+    if (!netif) {
+        return 0;
+    }
+    esp_netif_ip_info_t ip;
+    if (esp_netif_get_ip_info(netif, &ip) != ESP_OK || ip.ip.addr == 0) {
+        return 0;
+    }
+    return snprintf(dst, cap, ",\"%s\":\"" IPSTR "\"", key, IP2STR(&ip.ip));
+}
+
+/** GET /stats: pipeline counters as JSON for the UI diagnostics panel and A/B tuning. */
 static esp_err_t stats_get(httpd_req_t *req)
 {
     AUTH_GATE(req);
-    char body[512];
+    char ips[80] = "";
+    int off = stats_append_ip(ips, sizeof(ips), "ip_eth", "ETH_DEF");
+    if (off >= 0 && (size_t)off < sizeof(ips)) {
+        stats_append_ip(ips + off, sizeof(ips) - (size_t)off, "ip_wifi", "WIFI_STA_DEF");
+    }
+
+    char body[768];
     uint32_t cap_x10 = g_video_stats.cap_fps_x10;
     uint32_t enc_x10 = g_video_stats.enc_fps_x10;
     int n = snprintf(body, sizeof(body),
-                     "{\"pipeline\":\"%s\",\"cap_fps\":%u.%u,\"enc_fps\":%u.%u,"
+                     "{\"version\":\"" P4KVM_VERSION "\",\"pipeline\":\"%s\","
+                     "\"hostname\":\"" CONFIG_P4KVM_MDNS_HOSTNAME "\","
+                     "\"cap_fps\":%u.%u,\"enc_fps\":%u.%u,"
                      "\"bs_us\":%u,\"enc_us\":%u,\"jpeg_bytes\":%u,\"quality\":%u,"
                      "\"clients\":%d,\"hdmi_locked\":%s,\"sys_status\":%u,"
                      "\"cap_frames\":%u,\"enc_frames\":%u,\"enc_errors\":%u,\"recoveries\":%u,"
-                     "\"atx_power\":%s,\"atx_reset\":%s,"
+                     "\"atx_power\":%s,\"atx_reset\":%s,\"usb_hid\":%s%s,"
                      "\"uptime_s\":%lld,\"heap_free\":%u,\"psram_free\":%u}",
                      video_stats_pipeline_name(), (unsigned)(cap_x10 / 10u), (unsigned)(cap_x10 % 10u),
                      (unsigned)(enc_x10 / 10u), (unsigned)(enc_x10 % 10u), (unsigned)g_video_stats.bs_us,
@@ -289,7 +314,7 @@ static esp_err_t stats_get(httpd_req_t *req)
                      (unsigned)g_video_stats.cap_frames, (unsigned)g_video_stats.enc_frames,
                      (unsigned)g_video_stats.enc_errors, (unsigned)g_video_stats.recoveries,
                      atx_ctrl_power_available() ? "true" : "false", atx_ctrl_reset_available() ? "true" : "false",
-                     (long long)(esp_timer_get_time() / 1000000),
+                     usb_hid_ready() ? "true" : "false", ips, (long long)(esp_timer_get_time() / 1000000),
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     if (n <= 0 || n >= (int)sizeof(body)) {

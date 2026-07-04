@@ -5,106 +5,102 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta http-equiv="Cache-Control" content="no-cache" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
-    <title>p4kvm</title>
+    <title>p4kvm console</title>
   </head>
   <body>
-    <header class="top-bar">
-      <h1 class="top-title">p4kvm</h1>
-      <div class="top-right">
-        <p id="st" class="status-line">Connecting…</p>
-        <span id="fps-display" class="fps-display hidden">-- fps</span>
-        <div class="mode-seg" role="group" aria-label="Pointer mode">
-          <button type="button" id="mode-abs" class="seg-btn" title="Absolute pointer (virtual tablet): cursor follows exactly, no capture needed">Tablet</button>
-          <button type="button" id="mode-rel" class="seg-btn" title="Relative pointer: click video to lock the mouse (games, BIOS setups that ignore tablets)">Relative</button>
+    <header class="bar">
+      <div class="brand">
+        <span class="brand-plate">P4<b>KVM</b></span>
+        <span class="pill" id="status" data-tone="off">BOOT</span>
+      </div>
+      <div class="bar-right">
+        <span class="tele" id="tele" title="draw fps / link rate">
+          <b id="tele-fps">--</b><i>fps</i><em>·</em><b id="tele-mbps">--</b><i>Mb/s</i>
+        </span>
+        <div class="seg" role="group" aria-label="Pointer mode">
+          <button type="button" id="mode-abs" class="seg-b" title="Absolute pointer (virtual tablet): cursor follows 1:1, no capture needed">TABLET</button>
+          <button type="button" id="mode-rel" class="seg-b" title="Relative pointer (pointer lock): for BIOS/UEFI and games">REL</button>
         </div>
-        <button type="button" id="btn-fullscreen" class="icon-btn" title="Fullscreen" aria-label="Fullscreen">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
-          </svg>
+        <button type="button" class="ico" id="btn-fullscreen" title="Fullscreen" aria-label="Fullscreen">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
         </button>
-        <details class="gear-dd" id="gear-dd">
-          <summary class="gear-sum" title="Settings" aria-label="Settings">
-            <svg
-              class="gear-ico"
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <path
-                d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
-              />
-              <circle cx="12" cy="12" r="3" />
-            </svg>
-          </summary>
-          <div class="gear-panel">
-            <h2 class="gear-panel-title">Keyboard</h2>
-            <div class="gear-row">
-              <button type="button" id="btn-send-esc" disabled>Esc</button>
-              <button type="button" id="btn-cad" disabled title="Send Ctrl+Alt+Del">Ctrl+Alt+Del</button>
-              <button type="button" id="btn-paste-clip" disabled>Paste clipboard</button>
-            </div>
-            <h2 class="gear-panel-title" id="atx-title" hidden>Host power</h2>
-            <div class="gear-row" id="atx-row" hidden>
-              <button type="button" id="btn-atx-power" hidden title="Tap the power button (boot / soft shutdown)">Power</button>
-              <button type="button" id="btn-atx-reset" hidden title="Tap the reset button">Reset</button>
-              <button type="button" id="btn-atx-force" class="danger" hidden title="Hold power 5 s (force off)">Force off</button>
-            </div>
-            <h2 class="gear-panel-title">Video</h2>
-            <label
-              class="gear-field"
-              title="JPEG quality 1–100 (stored on the device)."
-            >
-              <span class="gear-label">Encoding quality</span>
-              <span class="gear-ctrl">
-                <input
-                  type="number"
-                  id="jpeg-q"
-                  min="1"
-                  max="100"
-                  step="1"
-                  value="70"
-                />
-                <button type="button" id="btn-jpeg-q">Apply</button>
-              </span>
-            </label>
-            <label class="gear-field" title="Overlay with device pipeline statistics (fps, encode time, JPEG size, link rate).">
-              <span class="gear-label">Show stats</span>
-              <span class="gear-ctrl">
-                <input type="checkbox" id="show-stats" />
-              </span>
-            </label>
-            <h2 class="gear-panel-title">Pointer</h2>
-            <label
-              class="gear-field"
-              title="Scales relative-mode movement sent to the host (stored in this browser)."
-            >
-              <span class="gear-label">Sensitivity (relative mode)</span>
-              <span class="gear-ctrl gear-ctrl-range">
-                <input
-                  type="range"
-                  id="ptr-sens"
-                  min="25"
-                  max="300"
-                  step="5"
-                  value="100"
-                />
-                <span id="ptr-sens-val">100%</span>
-              </span>
-            </label>
-          </div>
-        </details>
+        <button type="button" class="ico" id="btn-drawer" title="Panel" aria-label="Panel" aria-expanded="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h16"/></svg>
+        </button>
       </div>
     </header>
-    <div class="kvm-wrap" id="kvm-wrap">
-      <div id="kvm-banner" class="kvm-banner" role="status"></div>
-      <div id="stats-overlay" class="stats-overlay hidden"></div>
-      <canvas id="kvm" width="1920" height="1080" tabindex="0"></canvas>
-    </div>
+
+    <main class="stage-wrap" id="stage-wrap">
+      <div class="stage" id="stage">
+        <canvas id="kvm" width="1920" height="1080" tabindex="0"></canvas>
+        <span class="bracket tl" aria-hidden="true"></span>
+        <span class="bracket tr" aria-hidden="true"></span>
+        <span class="bracket bl" aria-hidden="true"></span>
+        <span class="bracket br" aria-hidden="true"></span>
+        <div class="nosignal" id="nosignal">
+          <div class="ns-static" aria-hidden="true"></div>
+          <div class="ns-body">
+            <div class="ns-title">NO SIGNAL</div>
+            <div class="ns-reason" id="ns-reason">waiting for stream…</div>
+            <div class="ns-hint" id="ns-hint"></div>
+          </div>
+        </div>
+        <div class="stagehint" id="stagehint"></div>
+      </div>
+    </main>
+
+    <div class="scrim" id="scrim" hidden></div>
+
+    <aside class="drawer" id="drawer" aria-hidden="true">
+      <div class="dr-head">
+        <span class="dr-title">CONSOLE PANEL</span>
+        <button type="button" class="ico" id="btn-drawer-close" title="Close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+
+      <section class="dr-sec">
+        <h2>KEYBOARD</h2>
+        <div class="row">
+          <button type="button" class="act" id="btn-send-esc" disabled>ESC</button>
+          <button type="button" class="act" id="btn-cad" disabled title="Send Ctrl+Alt+Del">CTRL·ALT·DEL</button>
+          <button type="button" class="act" id="btn-paste-clip" disabled>PASTE CLIPBOARD</button>
+        </div>
+      </section>
+
+      <section class="dr-sec" id="sec-power" hidden>
+        <h2>HOST POWER</h2>
+        <div class="row">
+          <button type="button" class="act" id="btn-atx-power" hidden title="Tap power (boot / soft shutdown)">POWER</button>
+          <button type="button" class="act" id="btn-atx-reset" hidden title="Tap reset">RESET</button>
+          <button type="button" class="act danger" id="btn-atx-force" hidden title="Hold power 5 s (force off)">FORCE OFF</button>
+        </div>
+      </section>
+
+      <section class="dr-sec">
+        <h2>VIDEO</h2>
+        <label class="fld">
+          <span class="fld-l">JPEG quality <b id="q-val">--</b></span>
+          <input type="range" id="jpeg-q" min="1" max="100" step="1" value="70" />
+        </label>
+      </section>
+
+      <section class="dr-sec">
+        <h2>POINTER</h2>
+        <label class="fld">
+          <span class="fld-l">Sensitivity (relative mode) <b id="sens-val">100%</b></span>
+          <input type="range" id="ptr-sens" min="25" max="300" step="5" value="100" />
+        </label>
+      </section>
+
+      <section class="dr-sec">
+        <h2>DIAGNOSTICS</h2>
+        <dl class="diag" id="diag"></dl>
+      </section>
+
+      <footer class="dr-foot" id="dr-foot">p4kvm</footer>
+    </aside>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

@@ -677,7 +677,14 @@ esp_err_t tc358743_read_chip_id(tc358743_t *d, uint16_t *chip_id)
 esp_err_t tc358743_sys_status(tc358743_t *d, uint8_t *out_st)
 {
     ESP_RETURN_ON_FALSE(d && out_st, ESP_ERR_INVALID_ARG, TAG, "args");
-    *out_st = rd8(d, SYS_STATUS);
+    /* Propagate I2C failures: with the bridge absent/unpowered, rd8 would
+     * hand back garbage that the recovery ladder then acts on. */
+    uint8_t v = 0;
+    esp_err_t err = i2c_read_reg(d, SYS_STATUS, &v, 1);
+    if (err != ESP_OK) {
+        return err;
+    }
+    *out_st = v;
     return ESP_OK;
 }
 
