@@ -26,6 +26,18 @@ CONFIG_P4KVM_WIFI_ENABLE=y
 CONFIG_P4KVM_ETH_ENABLE=y
 CONFIG_P4KVM_WG_ENABLE=y
 
+# esp_wireguard creates a raw lwIP netif and stores its own device struct in
+# netif->state. With the default LWIP_ESP_NETIF_DATA=0, esp_netif's global
+# ext-callback (esp_netif_internal_dhcpc_cb) reads netif->state as an esp_netif_t
+# and null-derefs its ip_info the moment the WG netif's address is set -> Load
+# access fault boot loop. lwipopts.h only sets LWIP_ESP_NETIF_DATA=1 (esp_netif
+# then keeps its back-pointer in netif->client_data, leaving state free for the
+# WG device) when the bridge or PPP option is on. We enable the bridge purely
+# for that side effect; no bridge is ever created. The +1 slot below keeps the
+# count explicit (esp_netif needs one; LWIP_ESP_NETIF_DATA already adds it).
+CONFIG_ESP_NETIF_BRIDGE_EN=y
+CONFIG_LWIP_NUM_NETIF_CLIENT_DATA=1
+
 # WebSocket /ws for browser → USB HID control plane
 CONFIG_HTTPD_WS_SUPPORT=y
 # Lets P4KVM_AUTH_ENABLE reject /ws before the 101 upgrade (handshake runs before the URI handler)
