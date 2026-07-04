@@ -22,6 +22,7 @@ import "./style.css";
   const btnModeAbs = $("mode-abs");
   const btnModeRel = $("mode-rel");
   const btnFullscreen = $("btn-fullscreen");
+  const btnAudio = $("btn-audio");
   const btnDrawer = $("btn-drawer");
   const btnDrawerClose = $("btn-drawer-close");
   const drawer = $("drawer");
@@ -290,6 +291,7 @@ import "./style.css";
     ["quality", "QUALITY"],
     ["clients", "VIEWERS"],
     ["vpn", "WIREGUARD"],
+    ["audio", "AUDIO"],
     ["recover", "RECOVERIES"],
     ["encerr", "ENC ERRORS"],
     ["mem", "HEAP / PSRAM"],
@@ -400,6 +402,9 @@ import "./style.css";
     dset("quality", "q" + d.quality);
     const wg = d.wg || "off";
     dset("vpn", wg, wg === "up" ? "ok" : wg === "off" ? undefined : "warn");
+    const au = d.audio || "off";
+    dset("audio", audioOn ? "playing" : au, au === "streaming" || audioOn ? "ok" : undefined);
+    btnAudio.hidden = au === "off";
     dset("clients", String(d.clients));
     dset("recover", String(d.recoveries), d.recoveries > 0 ? "warn" : undefined);
     dset("encerr", String(d.enc_errors), d.enc_errors > 0 ? "err" : undefined);
@@ -970,6 +975,83 @@ import "./style.css";
     },
     { passive: false },
   );
+
+  /* ---------------- audio (optional HDMI capture) ---------------- */
+
+  /* Raw PCM S16LE 48 kHz stereo over /audio, played via an AudioWorklet ring
+   * buffer (~250 ms capacity; underflow plays silence). Off until the user
+   * clicks - browsers require a gesture to start audio anyway. */
+  const AUDIO_WORKLET_SRC = `
+    class P4KvmAudio extends AudioWorkletProcessor {
+      constructor() {
+        super();
+        this.buf = new Float32Array(24000);
+        this.r = 0; this.w = 0;
+        this.port.onmessage = (e) => {
+          const d = e.data;
+          for (let i = 0; i < d.length; i++) { this.buf[this.w % this.buf.length] = d[i]; this.w++; }
+          if (this.w - this.r > this.buf.length) this.r = this.w - this.buf.length;
+        };
+      }
+      process(inputs, outputs) {
+        const L = outputs[0][0], R = outputs[0][1] || outputs[0][0];
+        for (let i = 0; i < L.length; i++) {
+          if (this.w - this.r >= 2) {
+            L[i] = this.buf[this.r % this.buf.length];
+            R[i] = this.buf[(this.r + 1) % this.buf.length];
+            this.r += 2;
+          } else { L[i] = 0; R[i] = 0; }
+        }
+        return true;
+      }
+    }
+    registerProcessor("p4kvm-audio", P4KvmAudio);`;
+
+  let audioOn = false;
+  let audioCtx = null;
+  let audioWs = null;
+  let audioNode = null;
+
+  async function audioStart() {
+    audioCtx = new AudioContext({ sampleRate: 48000 });
+    const url = URL.createObjectURL(new Blob([AUDIO_WORKLET_SRC], { type: "application/javascript" }));
+    await audioCtx.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+    audioNode = new AudioWorkletNode(audioCtx, "p4kvm-audio", { outputChannelCount: [2] });
+    audioNode.connect(audioCtx.destination);
+    audioWs = new WebSocket(proto + "://" + location.host + "/audio");
+    audioWs.binaryType = "arraybuffer";
+    audioWs.onmessage = function (ev) {
+      const s16 = new Int16Array(ev.data);
+      const f = new Float32Array(s16.length);
+      for (let i = 0; i < s16.length; i++) f[i] = s16[i] / 32768;
+      audioNode.port.postMessage(f, [f.buffer]);
+    };
+    audioWs.onclose = function () {
+      if (audioOn) setHint("audio stream closed");
+      audioStop();
+    };
+  }
+
+  function audioStop() {
+    audioOn = false;
+    btnAudio.style.color = "";
+    if (audioWs) { audioWs.onclose = null; audioWs.close(); audioWs = null; }
+    if (audioNode) { audioNode.disconnect(); audioNode = null; }
+    if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  }
+
+  btnAudio.addEventListener("click", async function () {
+    if (audioOn) { audioStop(); return; }
+    try {
+      await audioStart();
+      audioOn = true;
+      btnAudio.style.color = "var(--amber)";
+    } catch (e) {
+      setHint("audio start failed: " + e);
+      audioStop();
+    }
+  });
 
   /* ---------------- fullscreen ---------------- */
 

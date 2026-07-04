@@ -8,6 +8,7 @@
 #include "nvs_flash.h"
 
 #include "atx_ctrl.h"
+#include "audio_stream.h"
 #include "capture.h"
 #include "ethernet.h"
 #include "http_server.h"
@@ -34,6 +35,7 @@ void app_main(void)
     ESP_ERROR_CHECK(wireguard_net_start());
     ESP_ERROR_CHECK(usb_hid_init());
     ESP_ERROR_CHECK(atx_ctrl_init());
+    ESP_ERROR_CHECK(audio_stream_init());
 
     g_jpeg_frame.front_idx = -1;
     g_jpeg_frame.jpeg_quality = (uint8_t)CONFIG_P4KVM_JPEG_QUALITY;

@@ -1,5 +1,6 @@
 set(p4kvm_capture_srcs
     "atx_ctrl.c"
+    "audio_stream.c"
     "capture.c"
     "capture_hw.c"
     "capture_mjpeg.c"
@@ -25,6 +26,7 @@ idf_component_register(
     REQUIRES
         esp_driver_gpio
         esp_driver_i2c
+        esp_driver_i2s
         esp_driver_cam
         esp_driver_isp
         esp_http_server

@@ -120,6 +120,19 @@ host's standby rail, and grounds may differ. The default circuit expects
   WiFi link may not sustain - drop the JPEG quality in the UI and watch the
   stats overlay's net rate.
 
+## HDMI audio (optional)
+
+`menuconfig → P4KVM → Enable HDMI audio capture` (`P4KVM_AUDIO_ENABLE`, off by
+default). Same approach as h2c-rpi on the Raspberry Pi: the TC358743 outputs
+the source's audio on its I2S pads (it is I2S master, clocks derived from the
+HDMI stream; the audio path is already configured by this firmware). Jumper-
+wire the adapter's I2S BCK / LRCK / DATA pads to three free P4 GPIOs and set
+them in menuconfig. Audio streams as raw PCM S16LE 48 kHz stereo over the
+/audio WebSocket (~1.5 Mbit/s); the speaker button appears in the top bar and
+playback starts on click (browser gesture requirement). Sample rate is assumed
+48 kHz - the only rate HDMI requires and the only one the EDID advertises.
+Hardware-unverified until the I2S pads are actually wired.
+
 ## WireGuard
 
 Built-in WireGuard client (`menuconfig → P4KVM → Enable WireGuard tunnel`,
@@ -146,9 +159,9 @@ it does not replace the VPN.
 
 ### How do I change the resolution/framerate?
 
-This is not supported yet, but you can change the EDID in tc358743_edid_bin defined
-in tc358743_edid_1080p30.h if you want to experiment. Keep the 2-lane MIPI budget in
-mind (see Video pipeline above).
+Drawer → Video → Resolution (720p60 / 1080p30); the device restarts into the
+new mode. Other timings would need their own EDID - see video_mode.c and keep
+the 2-lane MIPI budget in mind.
 
 ### Can I change the escape key from leaving captured input?
 

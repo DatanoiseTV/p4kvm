@@ -72,6 +72,35 @@ menu "P4KVM HDMI → CSI"
             Yes for the usual NPN/optocoupler stage (GPIO high = button
             pressed). No if your circuit inverts.
 
+    config P4KVM_AUDIO_ENABLE
+        bool "Enable HDMI audio capture (I2S from TC358743)"
+        default n
+        help
+            The TC358743 outputs the HDMI source's audio on its I2S pads (the
+            bridge is I2S master; clocks derive from the HDMI stream). Jumper-
+            wire the adapter's I2S BCK/LRCK(WS)/DATA pads to three P4 GPIOs
+            and set them below. Audio streams to the browser as raw PCM S16LE
+            48 kHz stereo over the /audio WebSocket (~1.5 Mbit/s), with a
+            speaker toggle in the UI. Same idea as h2c-rpi on the Raspberry Pi.
+
+    config P4KVM_AUDIO_I2S_BCK_GPIO
+        int "I2S bit clock GPIO (-1 unset)"
+        range -1 ENV_GPIO_IN_RANGE_MAX
+        default -1
+        depends on P4KVM_AUDIO_ENABLE
+
+    config P4KVM_AUDIO_I2S_WS_GPIO
+        int "I2S word select / LRCK GPIO (-1 unset)"
+        range -1 ENV_GPIO_IN_RANGE_MAX
+        default -1
+        depends on P4KVM_AUDIO_ENABLE
+
+    config P4KVM_AUDIO_I2S_DIN_GPIO
+        int "I2S data GPIO (-1 unset)"
+        range -1 ENV_GPIO_IN_RANGE_MAX
+        default -1
+        depends on P4KVM_AUDIO_ENABLE
+
     config P4KVM_WG_ENABLE
         bool "Enable WireGuard tunnel"
         default n

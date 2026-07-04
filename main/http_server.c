@@ -27,6 +27,7 @@
 #endif
 
 #include "atx_ctrl.h"
+#include "audio_stream.h"
 #include "jpeg_frame.h"
 #include "usb_hid.h"
 #include "video_mode.h"
@@ -151,6 +152,7 @@ static int s_ws_fd = -1;
 static void http_sess_close_cb(httpd_handle_t hd, int sockfd)
 {
     (void)hd;
+    audio_stream_on_sock_close(sockfd);
     if (!s_ws_mu) {
         return;
     }
@@ -307,7 +309,7 @@ static esp_err_t stats_get(httpd_req_t *req)
                      "\"bs_us\":%u,\"enc_us\":%u,\"jpeg_bytes\":%u,\"quality\":%u,"
                      "\"clients\":%d,\"hdmi_locked\":%s,\"sys_status\":%u,"
                      "\"cap_frames\":%u,\"enc_frames\":%u,\"enc_errors\":%u,\"recoveries\":%u,"
-                     "\"atx_power\":%s,\"atx_reset\":%s,\"usb_hid\":%s,\"wg\":\"%s\"%s,"
+                     "\"atx_power\":%s,\"atx_reset\":%s,\"usb_hid\":%s,\"wg\":\"%s\",\"audio\":\"%s\"%s,"
                      "\"uptime_s\":%lld,\"heap_free\":%u,\"psram_free\":%u}",
                      video_stats_pipeline_name(), video_mode_name(), (unsigned long)video_mode_hres(),
                      (unsigned long)video_mode_vres(), (unsigned)(cap_x10 / 10u), (unsigned)(cap_x10 % 10u),
@@ -318,7 +320,7 @@ static esp_err_t stats_get(httpd_req_t *req)
                      (unsigned)g_video_stats.cap_frames, (unsigned)g_video_stats.enc_frames,
                      (unsigned)g_video_stats.enc_errors, (unsigned)g_video_stats.recoveries,
                      atx_ctrl_power_available() ? "true" : "false", atx_ctrl_reset_available() ? "true" : "false",
-                     usb_hid_ready() ? "true" : "false", wireguard_net_status_str(), ips,
+                     usb_hid_ready() ? "true" : "false", wireguard_net_status_str(), audio_stream_status_str(), ips,
                      (long long)(esp_timer_get_time() / 1000000),
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
@@ -647,5 +649,17 @@ httpd_handle_t http_server_start(void)
 #endif
     };
     httpd_register_uri_handler(h, &u_ws);
+    if (audio_stream_available()) {
+        httpd_uri_t u_audio = {
+            .uri = "/audio",
+            .method = HTTP_GET,
+            .handler = audio_ws_handler,
+            .is_websocket = true,
+#if CONFIG_P4KVM_AUTH_ENABLE
+            .ws_pre_handshake_cb = ws_auth_pre_handshake,
+#endif
+        };
+        httpd_register_uri_handler(h, &u_audio);
+    }
     return h;
 }

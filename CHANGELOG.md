@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format follows
 ## [0.2.0] - 2026-07-04
 
 ### Added
+- Optional HDMI audio capture (`P4KVM_AUDIO_ENABLE`, h2c-rpi approach):
+  TC358743 I2S output jumper-wired to three P4 GPIOs, received as I2S
+  slave and streamed as raw PCM S16LE 48 kHz stereo over the /audio
+  WebSocket; speaker toggle + AudioWorklet playback in the UI. Off by
+  default; hardware-unverified until wired.
 - Runtime video modes: 720p60 (default) and 1080p30, each with its own
   generated, checksummed EDID; selected from the web UI or POST
   /video-mode, persisted in NVS, applied via restart. HID absolute
