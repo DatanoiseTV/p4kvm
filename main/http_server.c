@@ -894,41 +894,6 @@ static esp_err_t stream_get(httpd_req_t *req)
     return ESP_OK;
 }
 
-/* TEMP DIAGNOSTIC: log socket/client/heap every 3 s to find what exhausts the
- * lwIP socket pool (accept -> ENFILE wedge). free_sock = how many sockets can
- * still be opened right now; httpd_clients = sessions esp_http_server holds. */
-static httpd_handle_t s_httpd_diag = NULL;
-static void sock_diag_task(void *arg)
-{
-    for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(3000));
-        /* Probe only a few so we don't grab the whole pool; 6 = "healthy",
-         * a decline toward 0 = exhaustion approaching. */
-        int fds[6];
-        int n = 0;
-        while (n < 6) {
-            int s = socket(AF_INET, SOCK_STREAM, 0);
-            if (s < 0) {
-                break;
-            }
-            fds[n++] = s;
-        }
-        for (int i = 0; i < n; i++) {
-            close(fds[i]);
-        }
-        int clients = -1;
-        if (s_httpd_diag) {
-            size_t num = 16;
-            int cfds[16];
-            if (httpd_get_client_list(s_httpd_diag, &num, cfds) == ESP_OK) {
-                clients = (int)num;
-            }
-        }
-        ESP_LOGW(TAG, "DIAG free_sock=%d httpd_clients=%d heap=%u", n, clients,
-                 (unsigned)esp_get_free_heap_size());
-    }
-}
-
 httpd_handle_t http_server_start(void)
 {
     if (!s_ws_mu) {
@@ -970,16 +935,20 @@ httpd_handle_t http_server_start(void)
      * browser's next reconnect simply re-establishes it. */
     cfg.lru_purge_enable = true;
     cfg.max_open_sockets = 12;
-    cfg.max_uri_handlers = 12;
+    /* Must exceed the number of httpd_register_uri_handler calls below, or the
+     * last handlers silently fail to register ("no slots left") and 404. That
+     * dropped /ws and /serial once MSC + serial were added, and the browser's
+     * WS reconnect storm against the missing /ws exhausted the socket pool
+     * (accept ENFILE) - the long-hunted "HTTP wedge". Count: root, favicon,
+     * stream, jpeg-quality, stats, atx, video-mode, config x2, media x3, ws,
+     * audio, serial = 15. Keep headroom. */
+    cfg.max_uri_handlers = 18;
 
     httpd_handle_t h = NULL;
     if (httpd_start(&h, &cfg) != ESP_OK) {
         ESP_LOGE(TAG, "httpd_start");
         return NULL;
     }
-    s_httpd_diag = h;
-    xTaskCreate(sock_diag_task, "sockdiag", 3072, NULL, tskIDLE_PRIORITY + 7, NULL);
-
     httpd_uri_t u_root = {.uri = "/", .method = HTTP_GET, .handler = root_get};
     httpd_register_uri_handler(h, &u_root);
     httpd_uri_t u_favicon = {.uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get};

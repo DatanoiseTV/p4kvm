@@ -28,6 +28,9 @@
         <button type="button" class="ico" id="btn-audio" title="Audio (HDMI capture)" aria-label="Audio" hidden>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path id="audio-waves" d="M15.5 8.5a5 5 0 0 1 0 7M18.4 5.6a9 9 0 0 1 0 12.8" opacity="0.35"/></svg>
         </button>
+        <button type="button" class="ico" id="btn-media" title="Virtual media (USB drive)" aria-label="Virtual media" aria-expanded="false" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10"/><circle id="media-led" cx="8" cy="15" r="1.4" fill="currentColor" stroke="none"/></svg>
+        </button>
         <button type="button" class="ico" id="btn-hud" title="Debug overlay: pointer position + keystrokes" aria-label="Debug overlay" aria-pressed="false">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3.4M12 18.6V22M2 12h3.4M18.6 12H22"/></svg>
         </button>
@@ -39,6 +42,27 @@
         </button>
       </div>
     </header>
+
+    <div class="popover" id="media-pop" role="dialog" aria-label="Virtual media" hidden>
+      <div class="pop-head">
+        <span>VIRTUAL MEDIA</span>
+        <span class="pop-state" id="media-status">--</span>
+      </div>
+      <label class="fld">
+        <span class="fld-l">Boot image (.img / .iso, max 12 MiB)</span>
+        <input type="file" class="txt" id="media-file" accept=".img,.iso,.bin,application/octet-stream" />
+      </label>
+      <label class="fld pop-check"><span class="fld-l">Mount writable (target can modify)</span><span class="gear-ctrl"><input type="checkbox" id="media-writable" /></span></label>
+      <div class="fld" id="media-prog-wrap" hidden>
+        <span class="fld-l">Uploading <b id="media-prog-pct">0%</b></span>
+        <progress id="media-prog" max="100" value="0"></progress>
+      </div>
+      <div class="row">
+        <button type="button" class="act" id="btn-media-mount" disabled>MOUNT IMAGE</button>
+        <button type="button" class="act" id="btn-media-eject">EJECT</button>
+      </div>
+      <p class="note">Appears as a removable USB drive on the target. Read-only by default; empty = a blank formatted floppy.</p>
+    </div>
 
     <main class="stage-wrap" id="stage-wrap">
       <div class="stage" id="stage">
@@ -113,25 +137,6 @@
             <button type="button" id="res-1080" class="seg-b" title="1920x1080 at 30 Hz - full detail; best on Ethernet">1080P30</button>
           </div>
         </div>
-      </section>
-
-      <section class="dr-sec">
-        <h2>VIRTUAL MEDIA</h2>
-        <p class="note" id="media-state">USB drive: <b id="media-status">--</b></p>
-        <label class="fld">
-          <span class="fld-l">Boot image (.img / .iso, max 12 MiB)</span>
-          <input type="file" class="txt" id="media-file" accept=".img,.iso,.bin,application/octet-stream" />
-        </label>
-        <label class="fld"><span class="fld-l">Mount writable (target can modify)</span><span class="gear-ctrl"><input type="checkbox" id="media-writable" /></span></label>
-        <div class="row">
-          <button type="button" class="act" id="btn-media-mount" disabled>MOUNT IMAGE</button>
-          <button type="button" class="act" id="btn-media-eject">EJECT</button>
-        </div>
-        <div class="fld" id="media-prog-wrap" hidden>
-          <span class="fld-l">Uploading <b id="media-prog-pct">0%</b></span>
-          <progress id="media-prog" max="100" value="0" style="width:100%"></progress>
-        </div>
-        <p class="note">The image appears as a removable USB drive on the target. Read-only by default; a writable mount lets the target change it. Empty = a blank formatted floppy.</p>
       </section>
 
       <section class="dr-sec">

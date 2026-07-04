@@ -57,6 +57,9 @@ import { FitAddon } from "@xterm/addon-fit";
   const btnRes1080 = $("res-1080");
   const ptrSens = $("ptr-sens");
   const sensVal = $("sens-val");
+  const btnMedia = $("btn-media");
+  const mediaPop = $("media-pop");
+  const mediaLed = $("media-led");
   const mediaStatus = $("media-status");
   const mediaFile = $("media-file");
   const mediaWritable = $("media-writable");
@@ -155,7 +158,6 @@ import { FitAddon } from "@xterm/addon-fit";
     drawer.setAttribute("aria-hidden", String(!open));
     btnDrawer.setAttribute("aria-expanded", String(open));
     scrim.hidden = !open;
-    if (open) refreshMediaStatus();
   }
   btnDrawer.addEventListener("click", () => drawerOpen(!drawer.classList.contains("open")));
   btnDrawerClose.addEventListener("click", () => drawerOpen(false));
@@ -479,6 +481,9 @@ import { FitAddon } from "@xterm/addon-fit";
           jpegQ.value = String(deviceStats.quality);
           qVal.textContent = "q" + deviceStats.quality;
         }
+        /* Reveal + refresh the media button once, when the device first answers.
+         * Afterwards it refreshes only on popover open / mount / eject. */
+        if (btnMedia.hidden) refreshMediaStatus();
         return;
       }
     } catch (e) {
@@ -679,18 +684,54 @@ import { FitAddon } from "@xterm/addon-fit";
     return n + " B";
   }
 
+  const FLOPPY_BYTES = 1474560; /* 1.44 MB blank floppy = "no image mounted" */
+
+  function applyMediaState(s) {
+    if (!s || !s.available) {
+      mediaStatus.textContent = "not ready";
+      btnMedia.classList.remove("on");
+      return;
+    }
+    btnMedia.hidden = false;
+    const mounted = s.present && s.size_bytes !== FLOPPY_BYTES;
+    btnMedia.classList.toggle("on", mounted);
+    btnMedia.title = mounted
+      ? "Virtual media: " + fmtBytes(s.size_bytes) + " mounted"
+      : "Virtual media (USB drive)";
+    if (!s.present) {
+      mediaStatus.textContent = "ejected";
+    } else if (mounted) {
+      mediaStatus.textContent = fmtBytes(s.size_bytes) + (s.writable ? " · read/write" : " · read-only");
+    } else {
+      mediaStatus.textContent = "empty floppy";
+    }
+  }
+
   async function refreshMediaStatus() {
     try {
       const r = await fetch("/media/status", { cache: "no-store" });
-      if (!r.ok) { mediaStatus.textContent = "unavailable"; return; }
-      const s = await r.json();
-      if (!s.available) { mediaStatus.textContent = "not ready"; return; }
-      if (!s.present) { mediaStatus.textContent = "ejected"; return; }
-      mediaStatus.textContent = fmtBytes(s.size_bytes) + (s.writable ? " · read/write" : " · read-only");
+      if (!r.ok) { applyMediaState(null); return; }
+      applyMediaState(await r.json());
     } catch (e) {
-      mediaStatus.textContent = "unavailable";
+      applyMediaState(null);
     }
   }
+
+  function mediaPopOpen(open) {
+    mediaPop.hidden = !open;
+    btnMedia.setAttribute("aria-expanded", String(open));
+    if (open) refreshMediaStatus();
+  }
+  btnMedia.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    mediaPopOpen(mediaPop.hidden);
+  });
+  /* Dismiss on outside click / Esc, but not when interacting inside the popover. */
+  mediaPop.addEventListener("click", (ev) => ev.stopPropagation());
+  document.addEventListener("click", () => { if (!mediaPop.hidden) mediaPopOpen(false); });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && !mediaPop.hidden) mediaPopOpen(false);
+  });
 
   mediaFile.addEventListener("change", function () {
     btnMediaMount.disabled = !(mediaFile.files && mediaFile.files.length);
