@@ -29,6 +29,7 @@
 #include "atx_ctrl.h"
 #include "jpeg_frame.h"
 #include "usb_hid.h"
+#include "video_mode.h"
 #include "video_stats.h"
 #include "wireguard_net.h"
 
@@ -301,13 +302,15 @@ static esp_err_t stats_get(httpd_req_t *req)
     int n = snprintf(body, sizeof(body),
                      "{\"version\":\"" P4KVM_VERSION "\",\"pipeline\":\"%s\","
                      "\"hostname\":\"" CONFIG_P4KVM_MDNS_HOSTNAME "\","
+                     "\"mode\":\"%s\",\"width\":%lu,\"height\":%lu,"
                      "\"cap_fps\":%u.%u,\"enc_fps\":%u.%u,"
                      "\"bs_us\":%u,\"enc_us\":%u,\"jpeg_bytes\":%u,\"quality\":%u,"
                      "\"clients\":%d,\"hdmi_locked\":%s,\"sys_status\":%u,"
                      "\"cap_frames\":%u,\"enc_frames\":%u,\"enc_errors\":%u,\"recoveries\":%u,"
                      "\"atx_power\":%s,\"atx_reset\":%s,\"usb_hid\":%s,\"wg\":\"%s\"%s,"
                      "\"uptime_s\":%lld,\"heap_free\":%u,\"psram_free\":%u}",
-                     video_stats_pipeline_name(), (unsigned)(cap_x10 / 10u), (unsigned)(cap_x10 % 10u),
+                     video_stats_pipeline_name(), video_mode_name(), (unsigned long)video_mode_hres(),
+                     (unsigned long)video_mode_vres(), (unsigned)(cap_x10 / 10u), (unsigned)(cap_x10 % 10u),
                      (unsigned)(enc_x10 / 10u), (unsigned)(enc_x10 % 10u), (unsigned)g_video_stats.bs_us,
                      (unsigned)g_video_stats.enc_us, (unsigned)g_video_stats.jpeg_bytes,
                      (unsigned)g_jpeg_frame.jpeg_quality, jpeg_frame_stream_clients(),
@@ -359,6 +362,27 @@ static esp_err_t atx_post(httpd_req_t *req)
     }
     httpd_resp_set_type(req, "text/plain");
     return httpd_resp_sendstr(req, "ok\n");
+}
+
+/** POST /video-mode?mode=720p60|1080p30 - persist to NVS and restart the device. */
+static esp_err_t video_mode_post(httpd_req_t *req)
+{
+    AUTH_GATE(req);
+    char query[48];
+    char mode[16] = {0};
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+        httpd_query_key_value(query, "mode", mode, sizeof(mode)) != ESP_OK) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing mode");
+    }
+    esp_err_t er = video_mode_set_and_reboot(mode);
+    if (er == ESP_ERR_INVALID_ARG) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "unknown mode (720p60|1080p30)");
+    }
+    if (er != ESP_OK) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(er));
+    }
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_sendstr(req, "restarting\n");
 }
 
 /** GET /jpeg-quality optional query `q=1..100` sets quality; response body is current quality (text/plain). */
@@ -610,6 +634,8 @@ httpd_handle_t http_server_start(void)
     httpd_register_uri_handler(h, &u_stats);
     httpd_uri_t u_atx = {.uri = "/atx", .method = HTTP_POST, .handler = atx_post};
     httpd_register_uri_handler(h, &u_atx);
+    httpd_uri_t u_vmode = {.uri = "/video-mode", .method = HTTP_POST, .handler = video_mode_post};
+    httpd_register_uri_handler(h, &u_vmode);
     httpd_uri_t u_ws = {
         .uri = "/ws",
         .method = HTTP_GET,

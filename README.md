@@ -70,8 +70,13 @@ Two build-time pipelines (`menuconfig → P4KVM → CSI capture pixel pipeline`)
   4:2:0 RGB888 output. Encode time measured 29 ms/frame at 1080p (360 MHz CPU,
   test pattern writing PSRAM concurrently).
 
-Input is fixed at 1080p30 by the EDID (`tc358743_edid_1080p30.h`). 1080p60 does not
-fit 2 MIPI lanes at this link rate even as YUV422, so a faster EDID would not help.
+Capture resolution is a runtime mode (drawer → Video → Resolution, or
+`POST /video-mode?mode=720p60|1080p30`), persisted in NVS and applied with a
+device restart, since changing it means advertising a different EDID to the
+source and re-sizing every DMA buffer. Default is **720p60**: about one third
+the MJPEG bitrate of 1080p at the same quality, which is what a 2.4 GHz WiFi
+link realistically sustains; switch to 1080p30 on Ethernet for full detail.
+1080p60 does not fit 2 MIPI lanes at this link rate even as YUV422.
 
 **Verification status** (rev 1.3 board, WiFi, test pattern): boots, WiFi + mDNS +
 HTTP + `/stats` + MJPEG streaming and the YUV422 encoder byte order are verified on

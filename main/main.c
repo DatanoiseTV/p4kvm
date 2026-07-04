@@ -14,6 +14,7 @@
 #include "jpeg_frame.h"
 #include "net_common.h"
 #include "usb_hid.h"
+#include "video_mode.h"
 #include "wifi_net.h"
 #include "wireguard_net.h"
 
@@ -25,6 +26,7 @@ void app_main(void)
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
+    video_mode_init();
     ESP_ERROR_CHECK(net_common_init());
     ESP_ERROR_CHECK(ethernet_init());
     ESP_ERROR_CHECK(wifi_net_init());

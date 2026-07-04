@@ -83,6 +83,13 @@
           <span class="fld-l">JPEG quality <b id="q-val">--</b></span>
           <input type="range" id="jpeg-q" min="1" max="100" step="1" value="70" />
         </label>
+        <div class="fld">
+          <span class="fld-l">Resolution <b id="res-val">--</b></span>
+          <div class="seg" role="group" aria-label="Resolution">
+            <button type="button" id="res-720" class="seg-b" title="1280x720, EDID offers 60 Hz - about one third the bitrate of 1080p; best for WiFi">720P60</button>
+            <button type="button" id="res-1080" class="seg-b" title="1920x1080 at 30 Hz - full detail; best on Ethernet">1080P30</button>
+          </div>
+        </div>
       </section>
 
       <section class="dr-sec">

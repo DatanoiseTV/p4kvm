@@ -20,7 +20,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
-#include "p4kvm_hw_defaults.h"
+#include "video_mode.h"
 
 #if CONFIG_P4KVM_TEST_PATTERN
 
@@ -134,8 +134,8 @@ static void testpat_task(void *arg)
 
 capture_ctx_t *capture_testpat_init_start(void)
 {
-    s_cap.hres = P4KVM_CSI_H_RES;
-    s_cap.vres = P4KVM_CSI_V_RES;
+    s_cap.hres = video_mode_hres();
+    s_cap.vres = video_mode_vres();
     s_cap.frame_bytes = (size_t)s_cap.hres * (size_t)s_cap.vres * (CAPTURE_PIXEL_BPP / 8u);
     s_row_bytes = (size_t)s_cap.hres * (CAPTURE_PIXEL_BPP / 8u);
 

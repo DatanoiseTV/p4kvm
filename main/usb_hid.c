@@ -18,8 +18,6 @@
 #include "tinyusb.h"
 #include "tinyusb_default_config.h"
 
-#include "p4kvm_hw_defaults.h"
-
 static const char *TAG = "usb_hid";
 
 #define TUSB_DESC_TOTAL_LEN (TUD_CONFIG_DESC_LEN + CFG_TUD_HID * TUD_HID_DESC_LEN)
@@ -201,24 +199,14 @@ static void send_mouse_segments(uint8_t buttons, int32_t dx, int32_t dy, int8_t 
     }
 }
 
-/** Scale a frame-pixel coordinate (0..res-1) to the 0..32767 HID logical range. */
-static uint16_t abs_axis_scale(uint16_t v, uint32_t res)
-{
-    if (res < 2) {
-        return 0;
-    }
-    if (v >= res) {
-        v = (uint16_t)(res - 1);
-    }
-    return (uint16_t)(((uint32_t)v * P4KVM_ABS_AXIS_MAX) / (res - 1));
-}
-
 static void process_mouse_abs(const usb_hid_q_msg_t *m)
 {
+    /* The wire protocol carries absolute coordinates already in the HID
+     * logical range 0..32767 (resolution-independent), so no rescaling. */
     p4kvm_abs_pointer_report_t r = {
         .buttons = m->u.mouse.buttons,
-        .x = abs_axis_scale(m->u.mouse.ax, P4KVM_CSI_H_RES),
-        .y = abs_axis_scale(m->u.mouse.ay, P4KVM_CSI_V_RES),
+        .x = (m->u.mouse.ax > P4KVM_ABS_AXIS_MAX) ? P4KVM_ABS_AXIS_MAX : m->u.mouse.ax,
+        .y = (m->u.mouse.ay > P4KVM_ABS_AXIS_MAX) ? P4KVM_ABS_AXIS_MAX : m->u.mouse.ay,
         .wheel = m->u.mouse.wheel,
     };
     tud_hid_report(P4KVM_HID_REPORT_ID_ABS, &r, sizeof(r));

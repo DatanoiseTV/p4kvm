@@ -13,6 +13,7 @@ set(p4kvm_capture_srcs
     "main.c"
     "tc358743.c"
     "usb_hid.c"
+    "video_mode.c"
 )
 
 idf_component_register(

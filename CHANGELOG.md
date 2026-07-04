@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format follows
 ## [0.2.0] - 2026-07-04
 
 ### Added
+- Runtime video modes: 720p60 (default) and 1080p30, each with its own
+  generated, checksummed EDID; selected from the web UI or POST
+  /video-mode, persisted in NVS, applied via restart. HID absolute
+  coordinates became resolution-independent (0..32767 on the wire) and
+  the web canvas follows the device-reported frame size.
 - WireGuard client (`P4KVM_WG_ENABLE`, trombik/esp_wireguard - same
   wireguard-lwip core as ciniml's Arduino port): key/endpoint config in
   menuconfig, waits for IP + NTP sync, supervises the handshake and

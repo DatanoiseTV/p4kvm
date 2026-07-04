@@ -17,8 +17,8 @@ bool usb_hid_ready(void);
 
 /**
  * Queue an absolute pointer ("virtual tablet") report.
- * @param abs_x,abs_y frame pixels (0..P4KVM_CSI_H/V_RES-1), scaled to the 0..32767 HID range.
- * The host places the cursor exactly there - no drift, independent of host pointer acceleration.
+ * @param abs_x,abs_y HID logical coordinates 0..32767 (resolution-independent; the web
+ * client scales from its canvas). The host places the cursor exactly there - no drift.
  */
 void usb_hid_mouse(uint8_t buttons, uint16_t abs_x, uint16_t abs_y, int8_t wheel);
 

@@ -34,6 +34,7 @@
 
 #include "tc358743.h"
 #include "tc358743_hdmi_debug.h"
+#include "video_mode.h"
 
 static esp_cam_ctlr_handle_t s_cam;
 static isp_proc_handle_t s_isp_bypass;
@@ -214,8 +215,8 @@ capture_ctx_t *capture_hw_init_start(void)
 #endif
     ESP_ERROR_CHECK(tc358743_init_streaming(s_cap.tc));
 
-    s_cap.hres = P4KVM_CSI_H_RES;
-    s_cap.vres = P4KVM_CSI_V_RES;
+    s_cap.hres = video_mode_hres();
+    s_cap.vres = video_mode_vres();
     s_cap.frame_bytes = (size_t)s_cap.hres * (size_t)s_cap.vres * (CAPTURE_PIXEL_BPP / 8u);
 
     size_t align = 0;

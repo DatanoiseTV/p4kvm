@@ -1,8 +1,11 @@
 import "./style.css";
 
 (function () {
-  const W = 1920,
-    H = 1080;
+  /* Frame size follows the device's video mode (updated from /stats). */
+  let frameW = 1920,
+    frameH = 1080;
+  /* HID absolute axes are resolution-independent: 0..32767 on the wire. */
+  const ABS_MAX = 32767;
 
   /* ---------------- DOM ---------------- */
   const $ = (id) => document.getElementById(id);
@@ -32,6 +35,9 @@ import "./style.css";
   const btnAtxForce = $("btn-atx-force");
   const jpegQ = $("jpeg-q");
   const qVal = $("q-val");
+  const resVal = $("res-val");
+  const btnRes720 = $("res-720");
+  const btnRes1080 = $("res-1080");
   const ptrSens = $("ptr-sens");
   const sensVal = $("sens-val");
   const diagEl = $("diag");
@@ -149,7 +155,7 @@ import "./style.css";
       pendingJpeg = null;
       try {
         const bmp = await createImageBitmap(new Blob([jpeg], { type: "image/jpeg" }));
-        canvasCtx.drawImage(bmp, 0, 0, W, H);
+        canvasCtx.drawImage(bmp, 0, 0, frameW, frameH);
         bmp.close();
         drawFrames++;
         lastFrameAt = performance.now();
@@ -334,6 +340,20 @@ import "./style.css";
   let deviceStats = null;
   let statsFresh = false;
   let atxInitDone = false;
+  let restarting = false;
+
+  function applyVideoMode(d) {
+    if (!d || !d.width || !d.height) return;
+    if (canvas.width !== d.width || canvas.height !== d.height) {
+      canvas.width = d.width;
+      canvas.height = d.height;
+    }
+    frameW = d.width;
+    frameH = d.height;
+    resVal.textContent = d.mode || "--";
+    btnRes720.classList.toggle("active", d.mode === "720p60");
+    btnRes1080.classList.toggle("active", d.mode === "1080p30");
+  }
 
   function applyAtxAvailability(d) {
     if (atxInitDone || !d) return;
@@ -397,7 +417,9 @@ import "./style.css";
       if (r.ok) {
         deviceStats = await r.json();
         statsFresh = true;
+        restarting = false;
         applyAtxAvailability(deviceStats);
+        applyVideoMode(deviceStats);
         if (!qDragging && deviceStats.quality !== parseInt(jpegQ.value, 10)) {
           jpegQ.value = String(deviceStats.quality);
           qVal.textContent = "q" + deviceStats.quality;
@@ -413,6 +435,7 @@ import "./style.css";
   /* ---------------- no-signal presentation ---------------- */
 
   function noSignalReason() {
+    if (restarting) return { r: "RESTARTING", h: "applying the new video mode — back in about 10 seconds" };
     if (!streamUp) return { r: "STREAM OFFLINE", h: "reconnecting to the device…" };
     const d = statsFresh ? deviceStats : null;
     if (!d) return { r: "DEVICE UNREACHABLE", h: "the video stream is open but /stats does not answer" };
@@ -469,6 +492,28 @@ import "./style.css";
       }
     } catch (e) { /* device may still be starting */ }
   }
+
+  /* ---------------- resolution ---------------- */
+
+  async function switchVideoMode(mode) {
+    if (deviceStats && deviceStats.mode === mode) return;
+    if (!window.confirm("Switch to " + mode + "? The device restarts (about 10 s) and the host re-detects the display.")) return;
+    try {
+      const r = await fetch("/video-mode?mode=" + encodeURIComponent(mode), { method: "POST" });
+      if (r.ok) {
+        restarting = true;
+        statsFresh = false;
+        setStatus("RESTARTING", "warn");
+        setHint("device restarting into " + mode + "…");
+      } else {
+        setHint("mode switch failed: " + r.status);
+      }
+    } catch (e) {
+      setHint("mode switch failed (network)");
+    }
+  }
+  btnRes720.addEventListener("click", () => switchVideoMode("720p60"));
+  btnRes1080.addEventListener("click", () => switchVideoMode("1080p30"));
 
   /* ---------------- sensitivity ---------------- */
 
@@ -717,13 +762,10 @@ import "./style.css";
 
   /* ---------------- mouse ---------------- */
 
-  let lastX = 0,
-    lastY = 0;
-
   function scaleMovementToFrame() {
     const r = canvas.getBoundingClientRect();
     if (r.width <= 0 || r.height <= 0) return { sx: 1, sy: 1 };
-    return { sx: (W - 1) / r.width, sy: (H - 1) / r.height };
+    return { sx: (frameW - 1) / r.width, sy: (frameH - 1) / r.height };
   }
 
   function applyRelativeFromEvent(ev) {
@@ -731,8 +773,6 @@ import "./style.css";
     const sens = pointerSensitivityMult();
     const rdx = Math.round((ev.movementX || 0) * sx * sens);
     const rdy = Math.round((ev.movementY || 0) * sy * sens);
-    lastX = Math.max(0, Math.min(W - 1, lastX + rdx));
-    lastY = Math.max(0, Math.min(H - 1, lastY + rdy));
     return { rdx, rdy };
   }
 
@@ -833,11 +873,11 @@ import "./style.css";
     if (!raf) raf = requestAnimationFrame(flushMouse);
   }
 
-  function mapXY(ev) {
+  function mapAbs(ev) {
     const r = canvas.getBoundingClientRect();
     if (r.width <= 0 || r.height <= 0) return { x: 0, y: 0 };
-    const x = Math.max(0, Math.min(W - 1, Math.round(((ev.clientX - r.left) / r.width) * (W - 1))));
-    const y = Math.max(0, Math.min(H - 1, Math.round(((ev.clientY - r.top) / r.height) * (H - 1))));
+    const x = Math.max(0, Math.min(ABS_MAX, Math.round(((ev.clientX - r.left) / r.width) * ABS_MAX)));
+    const y = Math.max(0, Math.min(ABS_MAX, Math.round(((ev.clientY - r.top) / r.height) * ABS_MAX)));
     return { x, y };
   }
 
@@ -862,9 +902,7 @@ import "./style.css";
   /* Tablet (absolute) mode: hover moves the host cursor, no capture needed. */
   canvas.addEventListener("pointermove", function (ev) {
     if (mode !== "abs" || pointerLockActive() || !isMousePointer(ev)) return;
-    const { x, y } = mapXY(ev);
-    lastX = x;
-    lastY = y;
+    const { x, y } = mapAbs(ev);
     queueMouseAbs(mouseButtons(ev), x, y, 0, false);
   });
 
@@ -876,15 +914,10 @@ import "./style.css";
       try {
         canvas.setPointerCapture(ev.pointerId); /* keep drags outside the canvas */
       } catch (e) { /* pointer already gone */ }
-      const { x, y } = mapXY(ev);
-      lastX = x;
-      lastY = y;
+      const { x, y } = mapAbs(ev);
       queueMouseAbs(mouseButtons(ev), x, y, 0, true);
       return;
     }
-    const { x, y } = mapXY(ev);
-    lastX = x;
-    lastY = y;
     if (ev.button === 0 && !pointerLockActive() && typeof canvas.requestPointerLock === "function") {
       ev.preventDefault();
       const req = canvas.requestPointerLock();
@@ -895,9 +928,7 @@ import "./style.css";
   canvas.addEventListener("pointerup", function (ev) {
     if (mode !== "abs" || pointerLockActive() || !isMousePointer(ev)) return;
     ev.preventDefault();
-    const { x, y } = mapXY(ev);
-    lastX = x;
-    lastY = y;
+    const { x, y } = mapAbs(ev);
     queueMouseAbs(mouseButtons(ev), x, y, 0, true);
   });
 
@@ -908,7 +939,7 @@ import "./style.css";
       ev.preventDefault();
       const w = wheelStep(ev);
       if (w === 0) return;
-      const { x, y } = mapXY(ev);
+      const { x, y } = mapAbs(ev);
       queueMouseAbs(mouseButtons(ev), x, y, w, true);
     },
     { passive: false },

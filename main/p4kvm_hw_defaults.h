@@ -11,7 +11,6 @@
 
 #define P4KVM_TC358743_REFCLK_HZ 27000000u
 
-#define P4KVM_CSI_H_RES 1920u
-#define P4KVM_CSI_V_RES 1080u
+/* Capture resolution is a runtime choice now - see video_mode.h. */
 
 #define P4KVM_MIPI_LANE_MBPS 972

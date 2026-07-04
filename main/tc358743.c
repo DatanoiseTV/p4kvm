@@ -14,8 +14,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "p4kvm_hw_defaults.h"
-#include "tc358743_edid_1080p30.h"
 #include "tc358743_hdmi_debug.h"
+#include "video_mode.h"
 
 static const char *TAG = "tc358743";
 
@@ -622,11 +622,12 @@ static void hpd_set(tc358743_t *d, bool on)
  */
 static void edid_write_builtin(tc358743_t *d)
 {
-    const uint16_t edid_len = TC358743_EDID_TOTAL_LEN;
+    size_t edid_len = 0;
+    const uint8_t *edid = video_mode_edid(&edid_len);
     wr8(d, EDID_LEN1, edid_len & 0xff);
-    wr8(d, EDID_LEN2, edid_len >> 8);
+    wr8(d, EDID_LEN2, (uint8_t)(edid_len >> 8));
     for (uint16_t i = 0; i < edid_len; i += 128) {
-        i2c_write_reg(d, EDID_RAM + i, tc358743_edid_bin + i, 128);
+        i2c_write_reg(d, EDID_RAM + i, edid + i, 128);
     }
     vTaskDelay(pdMS_TO_TICKS(10));
 }
