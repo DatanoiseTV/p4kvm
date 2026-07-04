@@ -224,6 +224,33 @@ body {
 }
 .stagehint:empty { opacity: 0; }
 
+/* ---------- debug HUD (pointer + keystrokes) ---------- */
+
+.hud {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 5; /* above the no-signal overlay (2) so it reads on the test screen */
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.35;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  background: rgba(9, 11, 15, 0.74);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 9px;
+  pointer-events: none; /* never intercept clicks/hover meant for the canvas */
+  max-width: calc(100% - 16px);
+}
+.hud.on { display: flex; }
+.hud-row { display: flex; gap: 8px; white-space: nowrap; overflow: hidden; }
+.hud-k { color: var(--amber); min-width: 34px; opacity: 0.85; }
+.hud-row span:last-child { overflow: hidden; text-overflow: ellipsis; }
+
 /* ---------- no-signal ---------- */
 
 .nosignal {
@@ -234,6 +261,7 @@ body {
   justify-content: center;
   background: #050607;
   z-index: 2;
+  pointer-events: none; /* let hover/clicks reach the canvas so the HUD tracks the pointer here too */
 }
 .nosignal[hidden] { display: none; }
 

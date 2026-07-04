@@ -24,6 +24,9 @@
         <button type="button" class="ico" id="btn-audio" title="Audio (HDMI capture)" aria-label="Audio" hidden>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path id="audio-waves" d="M15.5 8.5a5 5 0 0 1 0 7M18.4 5.6a9 9 0 0 1 0 12.8" opacity="0.35"/></svg>
         </button>
+        <button type="button" class="ico" id="btn-hud" title="Debug overlay: pointer position + keystrokes" aria-label="Debug overlay" aria-pressed="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3.4M12 18.6V22M2 12h3.4M18.6 12H22"/></svg>
+        </button>
         <button type="button" class="ico" id="btn-fullscreen" title="Fullscreen" aria-label="Fullscreen">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
         </button>
@@ -49,6 +52,11 @@
           </div>
         </div>
         <div class="stagehint" id="stagehint"></div>
+        <div class="hud" id="hud" aria-hidden="true">
+          <div class="hud-row"><span class="hud-k">PTR</span><span id="hud-ptr">idle</span></div>
+          <div class="hud-row"><span class="hud-k">HELD</span><span id="hud-held">--</span></div>
+          <div class="hud-row"><span class="hud-k">KEYS</span><span id="hud-keys">--</span></div>
+        </div>
       </div>
     </main>
 

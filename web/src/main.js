@@ -22,6 +22,11 @@ import "./style.css";
   const btnModeAbs = $("mode-abs");
   const btnModeRel = $("mode-rel");
   const btnFullscreen = $("btn-fullscreen");
+  const btnHud = $("btn-hud");
+  const hud = $("hud");
+  const hudPtr = $("hud-ptr");
+  const hudHeld = $("hud-held");
+  const hudKeys = $("hud-keys");
   const btnAudio = $("btn-audio");
   const btnDrawer = $("btn-drawer");
   const btnDrawerClose = $("btn-drawer-close");
@@ -679,6 +684,76 @@ import "./style.css";
 
   const HELD = new Map();
 
+  /* ---------------- debug HUD ---------------- */
+
+  /* HID usage → short label, derived from CODE_TO_HID so it always matches. */
+  const HID_TO_LABEL = (function () {
+    const m = {};
+    for (const code in CODE_TO_HID) {
+      m[CODE_TO_HID[code]] = code
+        .replace(/^Key/, "")
+        .replace(/^Digit/, "")
+        .replace(/^Numpad/, "KP")
+        .replace(/^Arrow/, "");
+    }
+    return m;
+  })();
+  function hidLabel(h) {
+    return HID_TO_LABEL[h] || "0x" + h.toString(16);
+  }
+
+  const HUD_KEY = "p4kvm_hud";
+  let hudOn = lsGet(HUD_KEY) !== "0"; /* default on: it's a debugging aid */
+  let lastMod = 0;
+  const recentKeys = [];
+
+  function modLabels(mod) {
+    const p = [];
+    if (mod & 0x01) p.push("Ctrl");
+    if (mod & 0x04) p.push("Alt");
+    if (mod & 0x02) p.push("Shift");
+    if (mod & 0x08) p.push("Meta");
+    return p;
+  }
+  function ptrBtns(b) {
+    return (b & 1 ? "L" : "·") + (b & 4 ? "M" : "·") + (b & 2 ? "R" : "·");
+  }
+  function updatePtrHud(p) {
+    if (!hudOn) return;
+    if (p.mode === "rel") {
+      const sx = (p.dx >= 0 ? "+" : "") + p.dx, sy = (p.dy >= 0 ? "+" : "") + p.dy;
+      hudPtr.textContent =
+        "REL  d " + sx + "," + sy + "  btn " + ptrBtns(p.buttons) + (p.wheel ? "  whl " + p.wheel : "");
+    } else {
+      const px = Math.round((p.x / ABS_MAX) * (frameW - 1));
+      const py = Math.round((p.y / ABS_MAX) * (frameH - 1));
+      hudPtr.textContent =
+        "ABS  " + p.x + "," + p.y + "  px " + px + "," + py +
+        "  btn " + ptrBtns(p.buttons) + (p.wheel ? "  whl " + p.wheel : "");
+    }
+  }
+  function renderKbdHud() {
+    if (!hudOn) return;
+    const held = modLabels(lastMod);
+    for (const h of HELD.keys()) held.push(hidLabel(h));
+    hudHeld.textContent = held.length ? held.join(" ") : "--";
+    hudKeys.textContent = recentKeys.length ? recentKeys.slice(-8).join(" ") : "--";
+  }
+  function logKey(mod, base) {
+    recentKeys.push(modLabels(mod).concat(base).join("+"));
+    while (recentKeys.length > 12) recentKeys.shift();
+    renderKbdHud();
+  }
+  function setHud(on) {
+    hudOn = on;
+    hud.classList.toggle("on", on);
+    btnHud.classList.toggle("active", on);
+    btnHud.setAttribute("aria-pressed", String(on));
+    lsSet(HUD_KEY, on ? "1" : "0");
+    if (on) renderKbdHud();
+  }
+  btnHud.addEventListener("click", () => setHud(!hudOn));
+
   function hidModifierMask(ev) {
     let mod = 0;
     if (ev.ctrlKey) mod |= 0x01;
@@ -706,12 +781,16 @@ import "./style.css";
       if (keys.length >= 6) break;
       keys.push(k);
     }
-    sendRawKeyboard(hidModifierMask(ev), keys);
+    lastMod = hidModifierMask(ev);
+    sendRawKeyboard(lastMod, keys);
+    renderKbdHud();
   }
 
   function releaseAllKeys() {
     HELD.clear();
+    lastMod = 0;
     sendRawKeyboard(0, []);
+    renderKbdHud();
   }
 
   const MOD_ONLY = new Set([
@@ -773,11 +852,15 @@ import "./style.css";
   }
 
   btnSendEsc.addEventListener("click", function () {
-    if (wsReady()) tapKey(0, 0x29);
+    if (!wsReady()) return;
+    tapKey(0, 0x29);
+    logKey(0, "Escape");
   });
   btnCad.addEventListener("click", function () {
     /* Ctrl (0x01) + Alt (0x04) + Delete (0x4c) */
-    if (wsReady()) tapKey(0x05, 0x4c);
+    if (!wsReady()) return;
+    tapKey(0x05, 0x4c);
+    logKey(0x05, "Delete");
   });
   btnPasteClip.addEventListener("click", function () {
     if (!wsReady()) return;
@@ -788,7 +871,7 @@ import "./style.css";
     btnPasteClip.disabled = true;
     navigator.clipboard
       .readText()
-      .then((text) => typeStringAsHid(text))
+      .then((text) => { logKey(0, "paste(" + text.length + ")"); return typeStringAsHid(text); })
       .catch(() => setHint("clipboard read denied (grant permission / use HTTPS)"))
       .finally(() => {
         updateHidToolButtons();
@@ -810,6 +893,7 @@ import "./style.css";
     const h = CODE_TO_HID[ev.code];
     if (h === undefined) return;
     ev.preventDefault();
+    if (!ev.repeat && !HELD.has(h)) logKey(hidModifierMask(ev), hidLabel(h));
     HELD.set(h, true);
     syncKeyboard(ev);
   }
@@ -880,7 +964,9 @@ import "./style.css";
 
   function flushMouse() {
     raf = 0;
-    if (!pending || !wsReady()) return;
+    if (!pending) return;
+    updatePtrHud(pending); /* reflect the report even while the link is down */
+    if (!wsReady()) return;
     const p = pending;
     pending = null;
     const buf = new ArrayBuffer(8);
@@ -1186,6 +1272,7 @@ import "./style.css";
   }, 800);
 
   refreshInputUi();
+  setHud(hudOn);
 
   if (import.meta.hot) {
     import.meta.hot.dispose(function () {
