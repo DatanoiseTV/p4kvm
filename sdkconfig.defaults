@@ -18,6 +18,14 @@ CONFIG_LWIP_MAX_SOCKETS=24
 
 CONFIG_P4KVM_JPEG_QUALITY=70
 
+# Product feature toggles. These match the Kconfig defaults, but are pinned
+# here so a pre-existing sdkconfig (generated before a default flipped) can't
+# silently build a feature out - which is exactly how a WireGuard-less image
+# shipped once (sdkconfig kept "WG_ENABLE is not set" from an earlier build).
+CONFIG_P4KVM_WIFI_ENABLE=y
+CONFIG_P4KVM_ETH_ENABLE=y
+CONFIG_P4KVM_WG_ENABLE=y
+
 # WebSocket /ws for browser → USB HID control plane
 CONFIG_HTTPD_WS_SUPPORT=y
 # Lets P4KVM_AUTH_ENABLE reject /ws before the 101 upgrade (handshake runs before the URI handler)
