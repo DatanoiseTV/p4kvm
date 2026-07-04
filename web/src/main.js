@@ -46,6 +46,14 @@ import "./style.css";
   const btnRes1080 = $("res-1080");
   const ptrSens = $("ptr-sens");
   const sensVal = $("sens-val");
+  const mediaStatus = $("media-status");
+  const mediaFile = $("media-file");
+  const mediaWritable = $("media-writable");
+  const btnMediaMount = $("btn-media-mount");
+  const btnMediaEject = $("btn-media-eject");
+  const mediaProgWrap = $("media-prog-wrap");
+  const mediaProg = $("media-prog");
+  const mediaProgPct = $("media-prog-pct");
   const diagEl = $("diag");
   const atxNote = $("atx-note");
   const cfSsid = $("cf-ssid");
@@ -136,6 +144,7 @@ import "./style.css";
     drawer.setAttribute("aria-hidden", String(!open));
     btnDrawer.setAttribute("aria-expanded", String(open));
     scrim.hidden = !open;
+    if (open) refreshMediaStatus();
   }
   btnDrawer.addEventListener("click", () => drawerOpen(!drawer.classList.contains("open")));
   btnDrawerClose.addEventListener("click", () => drawerOpen(false));
@@ -641,6 +650,91 @@ import "./style.css";
   btnAtxForce.addEventListener("click", () =>
     atxPress("power_hold",
       "FORCE POWER OFF: holds the power button for 5 seconds and cuts the host hard. Unsaved data will be lost. Continue?"));
+
+  /* ---------------- virtual media ---------------- */
+
+  function fmtBytes(n) {
+    if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(2) + " MiB";
+    if (n >= 1024) return (n / 1024).toFixed(0) + " KiB";
+    return n + " B";
+  }
+
+  async function refreshMediaStatus() {
+    try {
+      const r = await fetch("/media/status", { cache: "no-store" });
+      if (!r.ok) { mediaStatus.textContent = "unavailable"; return; }
+      const s = await r.json();
+      if (!s.available) { mediaStatus.textContent = "not ready"; return; }
+      if (!s.present) { mediaStatus.textContent = "ejected"; return; }
+      mediaStatus.textContent = fmtBytes(s.size_bytes) + (s.writable ? " · read/write" : " · read-only");
+    } catch (e) {
+      mediaStatus.textContent = "unavailable";
+    }
+  }
+
+  mediaFile.addEventListener("change", function () {
+    btnMediaMount.disabled = !(mediaFile.files && mediaFile.files.length);
+  });
+
+  /* Stream the raw file body with XHR so we get upload progress (fetch has no
+   * request-progress event). The device sizes the ramdisk from Content-Length. */
+  function mountImage(file, writable) {
+    return new Promise(function (resolve, reject) {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/media/image?writable=" + (writable ? "1" : "0"));
+      xhr.setRequestHeader("Content-Type", "application/octet-stream");
+      xhr.upload.onprogress = function (ev) {
+        if (!ev.lengthComputable) return;
+        const pct = Math.round((ev.loaded / ev.total) * 100);
+        mediaProg.value = pct;
+        mediaProgPct.textContent = pct + "%";
+      };
+      xhr.onload = function () {
+        (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error("HTTP " + xhr.status));
+      };
+      xhr.onerror = function () { reject(new Error("network")); };
+      xhr.send(file);
+    });
+  }
+
+  btnMediaMount.addEventListener("click", async function () {
+    const file = mediaFile.files && mediaFile.files[0];
+    if (!file) return;
+    if (file.size > 12 * 1024 * 1024) {
+      setHint("image too large: " + fmtBytes(file.size) + " (max 12 MiB PSRAM)");
+      return;
+    }
+    btnMediaMount.disabled = true;
+    btnMediaEject.disabled = true;
+    mediaProgWrap.hidden = false;
+    mediaProg.value = 0;
+    mediaProgPct.textContent = "0%";
+    setHint("uploading " + file.name + " (" + fmtBytes(file.size) + ")…");
+    try {
+      await mountImage(file, mediaWritable.checked);
+      setHint("mounted " + file.name + " — the target now sees it as a USB drive");
+    } catch (e) {
+      setHint("mount failed: " + e.message);
+    } finally {
+      mediaProgWrap.hidden = true;
+      btnMediaEject.disabled = false;
+      btnMediaMount.disabled = !(mediaFile.files && mediaFile.files.length);
+      refreshMediaStatus();
+    }
+  });
+
+  btnMediaEject.addEventListener("click", async function () {
+    btnMediaEject.disabled = true;
+    try {
+      const r = await fetch("/media/eject", { method: "POST" });
+      setHint(r.ok ? "ejected — reverted to a blank floppy" : "eject failed: " + r.status);
+    } catch (e) {
+      setHint("eject failed (network)");
+    } finally {
+      btnMediaEject.disabled = false;
+      refreshMediaStatus();
+    }
+  });
 
   /* ---------------- WebSocket input ---------------- */
 

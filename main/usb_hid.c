@@ -8,6 +8,7 @@
 
 #include "class/hid/hid.h"
 #include "class/hid/hid_device.h"
+#include "class/msc/msc.h"
 #include "driver/gpio.h"
 #include "esp_check.h"
 #include "esp_log.h"
@@ -17,10 +18,16 @@
 #include "sdkconfig.h"
 #include "tinyusb.h"
 #include "tinyusb_default_config.h"
+#include "usb_msc.h"
 
 static const char *TAG = "usb_hid";
 
-#define TUSB_DESC_TOTAL_LEN (TUD_CONFIG_DESC_LEN + CFG_TUD_HID * TUD_HID_DESC_LEN)
+/* Composite: HID (interface 0) + raw-block MSC (interface 1). */
+#define TUSB_DESC_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN + TUD_MSC_DESC_LEN)
+
+#define EPNUM_HID_IN 0x81
+#define EPNUM_MSC_OUT 0x02
+#define EPNUM_MSC_IN 0x82
 
 /** Absolute pointer report ID (keyboard = 1, relative mouse = 2). */
 #define P4KVM_HID_REPORT_ID_ABS 3
@@ -69,11 +76,23 @@ static const char *s_string_descriptor[] = {
     "p4kvm KVM HID",
     "0",
     "HID",
+    "p4kvm Virtual Media",
 };
 
-static const uint8_t s_configuration_descriptor[] = {
-    TUD_CONFIG_DESCRIPTOR(1, 1, 0, TUSB_DESC_TOTAL_LEN, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100),
-    TUD_HID_DESCRIPTOR(0, 4, false, sizeof(s_hid_report_descriptor), 0x81, 16, 10),
+/* Composite config: HID at interface 0, MSC at interface 1. Bulk endpoints must
+ * be 512 bytes on high speed and <=64 on full speed, so the two speeds get
+ * distinct config descriptors that differ only in the MSC bulk max-packet size.
+ * itf_count = 2, string index 5 names the MSC interface. */
+static const uint8_t s_fs_config_descriptor[] = {
+    TUD_CONFIG_DESCRIPTOR(1, 2, 0, TUSB_DESC_TOTAL_LEN, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100),
+    TUD_HID_DESCRIPTOR(0, 4, false, sizeof(s_hid_report_descriptor), EPNUM_HID_IN, 16, 10),
+    TUD_MSC_DESCRIPTOR(1, 5, EPNUM_MSC_OUT, EPNUM_MSC_IN, 64),
+};
+
+static const uint8_t s_hs_config_descriptor[] = {
+    TUD_CONFIG_DESCRIPTOR(1, 2, 0, TUSB_DESC_TOTAL_LEN, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100),
+    TUD_HID_DESCRIPTOR(0, 4, false, sizeof(s_hid_report_descriptor), EPNUM_HID_IN, 16, 10),
+    TUD_MSC_DESCRIPTOR(1, 5, EPNUM_MSC_OUT, EPNUM_MSC_IN, 512),
 };
 
 /* Explicit device descriptor (Espressif VID, TinyUSB generic PID) so the
@@ -390,13 +409,16 @@ esp_err_t usb_hid_init(void)
     s_hid_q = xQueueCreate(192, sizeof(usb_hid_q_msg_t));
     ESP_RETURN_ON_FALSE(s_hid_q, ESP_ERR_NO_MEM, TAG, "queue");
 
+    /* Back the MSC LUN before the driver enumerates so the host sees a medium. */
+    ESP_RETURN_ON_ERROR(usb_msc_init(), TAG, "usb_msc_init");
+
     tinyusb_config_t tusb_cfg = TINYUSB_DEFAULT_CONFIG(tinyusb_on_event);
     tusb_cfg.descriptor.device = &s_device_descriptor;
-    tusb_cfg.descriptor.full_speed_config = s_configuration_descriptor;
+    tusb_cfg.descriptor.full_speed_config = s_fs_config_descriptor;
     tusb_cfg.descriptor.string = s_string_descriptor;
     tusb_cfg.descriptor.string_count = sizeof(s_string_descriptor) / sizeof(s_string_descriptor[0]);
 #if (TUD_OPT_HIGH_SPEED)
-    tusb_cfg.descriptor.high_speed_config = s_configuration_descriptor;
+    tusb_cfg.descriptor.high_speed_config = s_hs_config_descriptor;
 #endif
 
     ESP_RETURN_ON_ERROR(tinyusb_driver_install(&tusb_cfg), TAG, "tinyusb_driver_install");

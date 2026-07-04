@@ -105,6 +105,25 @@
       </section>
 
       <section class="dr-sec">
+        <h2>VIRTUAL MEDIA</h2>
+        <p class="note" id="media-state">USB drive: <b id="media-status">--</b></p>
+        <label class="fld">
+          <span class="fld-l">Boot image (.img / .iso, max 12 MiB)</span>
+          <input type="file" class="txt" id="media-file" accept=".img,.iso,.bin,application/octet-stream" />
+        </label>
+        <label class="fld"><span class="fld-l">Mount writable (target can modify)</span><span class="gear-ctrl"><input type="checkbox" id="media-writable" /></span></label>
+        <div class="row">
+          <button type="button" class="act" id="btn-media-mount" disabled>MOUNT IMAGE</button>
+          <button type="button" class="act" id="btn-media-eject">EJECT</button>
+        </div>
+        <div class="fld" id="media-prog-wrap" hidden>
+          <span class="fld-l">Uploading <b id="media-prog-pct">0%</b></span>
+          <progress id="media-prog" max="100" value="0" style="width:100%"></progress>
+        </div>
+        <p class="note">The image appears as a removable USB drive on the target. Read-only by default; a writable mount lets the target change it. Empty = a blank formatted floppy.</p>
+      </section>
+
+      <section class="dr-sec">
         <h2>POINTER</h2>
         <label class="fld">
           <span class="fld-l">Sensitivity (relative mode) <b id="sens-val">100%</b></span>

@@ -33,6 +33,7 @@
 #include "jpeg_frame.h"
 #include "runtime_cfg.h"
 #include "usb_hid.h"
+#include "usb_msc.h"
 #include "video_mode.h"
 #include "video_stats.h"
 #include "wireguard_net.h"
@@ -151,6 +152,13 @@ extern const char favicon_ico_end[] asm("_binary_favicon_ico_end");
 
 static SemaphoreHandle_t s_ws_mu;
 static int s_ws_fd = -1;
+/* Socket of the active MJPEG stream (single-viewer KVM). Newest viewer wins: a
+ * new /stream force-closes the previous stream's socket so its worker exits and
+ * frees the socket immediately. A hard "one at a time" reject was worse - a
+ * worker that never noticed its half-open peer would hold the slot forever,
+ * locking everyone out and driving the browser into a reconnect storm that
+ * exhausted the lwIP socket pool (accept -> ENFILE). s_ws_mu guards this too. */
+static int s_stream_fd = -1;
 
 static void http_sess_close_cb(httpd_handle_t hd, int sockfd)
 {
@@ -164,6 +172,36 @@ static void http_sess_close_cb(httpd_handle_t hd, int sockfd)
     }
     if (sockfd == s_ws_fd) {
         s_ws_fd = -1;
+    }
+    if (sockfd == s_stream_fd) {
+        s_stream_fd = -1;
+    }
+    xSemaphoreGive(s_ws_mu);
+}
+
+/* Register this connection as the active stream, force-closing the previous one
+ * (newest viewer wins). Mirrors ws_take_session. */
+static void stream_take_session(httpd_req_t *req)
+{
+    int fd = httpd_req_to_sockfd(req);
+    if (!s_ws_mu || xSemaphoreTake(s_ws_mu, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return;
+    }
+    if (s_stream_fd >= 0 && s_stream_fd != fd) {
+        httpd_sess_trigger_close(req->handle, s_stream_fd);
+    }
+    s_stream_fd = fd;
+    xSemaphoreGive(s_ws_mu);
+}
+
+/* Release the active-stream slot if this fd still owns it (worker exit / start failure). */
+static void stream_drop_session(int fd)
+{
+    if (!s_ws_mu || xSemaphoreTake(s_ws_mu, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return;
+    }
+    if (s_stream_fd == fd) {
+        s_stream_fd = -1;
     }
     xSemaphoreGive(s_ws_mu);
 }
@@ -362,6 +400,100 @@ static esp_err_t atx_post(httpd_req_t *req)
     if (er == ESP_ERR_INVALID_STATE) {
         return httpd_resp_send_custom_err(req, "409 Conflict", "press in progress");
     }
+    if (er != ESP_OK) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(er));
+    }
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_sendstr(req, "ok\n");
+}
+
+/** GET /media/status - virtual-media LUN state as JSON. */
+static esp_err_t media_status_get(httpd_req_t *req)
+{
+    AUTH_GATE(req);
+    char body[192];
+    int n = snprintf(body, sizeof(body),
+                     "{\"available\":%s,\"present\":%s,\"writable\":%s,"
+                     "\"size_bytes\":%u,\"block_count\":%u,\"block_size\":%u,\"max_bytes\":%u}",
+                     usb_msc_available() ? "true" : "false", usb_msc_medium_present() ? "true" : "false",
+                     usb_msc_writable() ? "true" : "false", (unsigned)usb_msc_capacity_bytes(),
+                     (unsigned)usb_msc_block_count(), (unsigned)usb_msc_block_size(),
+                     (unsigned)(12u * 1024u * 1024u));
+    if (n <= 0 || n >= (int)sizeof(body)) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "status");
+    }
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, body, (size_t)n);
+}
+
+/**
+ * POST /media/image?writable=0|1 - stream a raw .img/.iso into the PSRAM
+ * ramdisk. Content-Length is the image size; the body is the raw bytes. On
+ * success the host re-reads the new capacity (UNIT ATTENTION). Read-only by
+ * default so a booting target cannot corrupt the image.
+ */
+static esp_err_t media_image_post(httpd_req_t *req)
+{
+    AUTH_GATE(req);
+    if (!usb_msc_available()) {
+        return httpd_resp_send_custom_err(req, "503 Service Unavailable", "MSC not ready");
+    }
+    int total = req->content_len;
+    if (total <= 0) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "empty body");
+    }
+
+    bool writable = false;
+    char query[64];
+    char v[8];
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK &&
+        httpd_query_key_value(query, "writable", v, sizeof(v)) == ESP_OK) {
+        writable = (v[0] == '1' || v[0] == 't');
+    }
+
+    esp_err_t er = usb_msc_begin_image((uint32_t)total);
+    if (er == ESP_ERR_INVALID_SIZE) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "image too large (max 12 MiB PSRAM)");
+    }
+    if (er != ESP_OK) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "alloc");
+    }
+
+    /* Chunk straight from the socket into PSRAM; no full-image bounce buffer. */
+    char buf[4096];
+    uint32_t off = 0;
+    while ((int)off < total) {
+        int want = total - (int)off;
+        if (want > (int)sizeof(buf)) {
+            want = (int)sizeof(buf);
+        }
+        int r = httpd_req_recv(req, buf, want);
+        if (r <= 0) {
+            /* Truncated upload: leave the medium ejected rather than mount garbage. */
+            usb_msc_eject_to_floppy();
+            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv");
+        }
+        if (usb_msc_load(off, buf, (uint32_t)r) < 0) {
+            usb_msc_eject_to_floppy();
+            return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "load");
+        }
+        off += (uint32_t)r;
+    }
+
+    usb_msc_commit_image(writable);
+    httpd_resp_set_type(req, "application/json");
+    char ok[96];
+    int n = snprintf(ok, sizeof(ok), "{\"mounted\":true,\"size_bytes\":%u,\"writable\":%s}", (unsigned)off,
+                     writable ? "true" : "false");
+    return httpd_resp_send(req, ok, n > 0 ? (size_t)n : 0);
+}
+
+/** POST /media/eject - discard the mounted image, revert to the empty floppy. */
+static esp_err_t media_eject_post(httpd_req_t *req)
+{
+    AUTH_GATE(req);
+    esp_err_t er = usb_msc_eject_to_floppy();
     if (er != ESP_OK) {
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(er));
     }
@@ -602,6 +734,7 @@ static void stream_worker_task(void *arg)
 {
     httpd_req_t *req = (httpd_req_t *)arg;
     char hdr[96];
+    int my_fd = httpd_req_to_sockfd(req);
 
     sock_set_nodelay(req);
     jpeg_frame_stream_enter();
@@ -713,6 +846,7 @@ static void stream_worker_task(void *arg)
     if (httpd_req_async_handler_complete(req) != ESP_OK) {
         ESP_LOGW(TAG, "stream async complete failed");
     }
+    stream_drop_session(my_fd);
     vTaskDelete(NULL);
 }
 
@@ -741,13 +875,54 @@ static esp_err_t stream_get(httpd_req_t *req)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "stream busy");
     }
 
+    /* Newest viewer wins: close any previous stream so its worker exits and frees
+     * the socket, rather than rejecting this one (a stuck worker would otherwise
+     * lock everyone out and the browser would retry-storm the socket pool empty). */
+    stream_take_session(async_req);
+
     BaseType_t created =
         xTaskCreate(stream_worker_task, "p4kvm_stream", STREAM_WORKER_STACK, async_req, STREAM_WORKER_PRIO, NULL);
     if (created != pdPASS) {
+        stream_drop_session(httpd_req_to_sockfd(async_req));
         httpd_req_async_handler_complete(async_req);
         return httpd_resp_send_custom_err(req, "503 Service Unavailable", "stream task");
     }
     return ESP_OK;
+}
+
+/* TEMP DIAGNOSTIC: log socket/client/heap every 3 s to find what exhausts the
+ * lwIP socket pool (accept -> ENFILE wedge). free_sock = how many sockets can
+ * still be opened right now; httpd_clients = sessions esp_http_server holds. */
+static httpd_handle_t s_httpd_diag = NULL;
+static void sock_diag_task(void *arg)
+{
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(3000));
+        /* Probe only a few so we don't grab the whole pool; 6 = "healthy",
+         * a decline toward 0 = exhaustion approaching. */
+        int fds[6];
+        int n = 0;
+        while (n < 6) {
+            int s = socket(AF_INET, SOCK_STREAM, 0);
+            if (s < 0) {
+                break;
+            }
+            fds[n++] = s;
+        }
+        for (int i = 0; i < n; i++) {
+            close(fds[i]);
+        }
+        int clients = -1;
+        if (s_httpd_diag) {
+            size_t num = 16;
+            int cfds[16];
+            if (httpd_get_client_list(s_httpd_diag, &num, cfds) == ESP_OK) {
+                clients = (int)num;
+            }
+        }
+        ESP_LOGW(TAG, "DIAG free_sock=%d httpd_clients=%d heap=%u", n, clients,
+                 (unsigned)esp_get_free_heap_size());
+    }
 }
 
 httpd_handle_t http_server_start(void)
@@ -767,12 +942,29 @@ httpd_handle_t http_server_start(void)
     cfg.stack_size = 20 * 1024;
     /* Prefer draining TCP slightly above capture so multipart frames reach the browser. */
     cfg.task_priority = tskIDLE_PRIORITY + 6;
-    cfg.send_wait_timeout = 30;
+    /* Bound a send to a stalled/half-open peer so a stream worker can't sit
+     * blocked (holding its socket + the single-viewer slot) for the old 30 s. */
+    cfg.send_wait_timeout = 12;
+    /* Reap half-open sockets fast. The onboard C6 (esp_hosted over SDIO) blips
+     * the WiFi link, leaving TCP connections half-open; without keepalive probes
+     * they hold an lwIP socket until the peer happens to send, and a browser that
+     * reconnects across the blip stacks dead sockets until the 24-socket pool is
+     * exhausted (accept spins on ENFILE). Probe an idle peer after 5 s, then
+     * every 3 s x3 -> dead connection dropped in ~14 s. */
     cfg.keep_alive_enable = true;
+    cfg.keep_alive_idle = 5;
+    cfg.keep_alive_interval = 3;
+    cfg.keep_alive_count = 3;
     cfg.uri_match_fn = httpd_uri_match_wildcard;
     cfg.close_fn = http_sess_close_cb;
-    /* Single-user KVM: do not evict long-lived /stream when /ws or /jpeg-quality connects */
-    cfg.lru_purge_enable = false;
+    /* Reclaim the least-recently-used session when full instead of wedging.
+     * A browser (plus C6 WiFi blips) accumulates idle keep-alive and half-open
+     * connections; with this off, httpd held every one until the peer cleanly
+     * closed, filled all 12 slots + the lwIP pool, and then spun on accept()
+     * ENFILE forever (HTTP dead while ICMP stayed up). Safe now that the stream
+     * uses newest-viewer-wins: if the active /stream is ever the LRU victim, the
+     * browser's next reconnect simply re-establishes it. */
+    cfg.lru_purge_enable = true;
     cfg.max_open_sockets = 12;
     cfg.max_uri_handlers = 12;
 
@@ -781,6 +973,8 @@ httpd_handle_t http_server_start(void)
         ESP_LOGE(TAG, "httpd_start");
         return NULL;
     }
+    s_httpd_diag = h;
+    xTaskCreate(sock_diag_task, "sockdiag", 3072, NULL, tskIDLE_PRIORITY + 7, NULL);
 
     httpd_uri_t u_root = {.uri = "/", .method = HTTP_GET, .handler = root_get};
     httpd_register_uri_handler(h, &u_root);
@@ -800,6 +994,12 @@ httpd_handle_t http_server_start(void)
     httpd_register_uri_handler(h, &u_cfg_get);
     httpd_uri_t u_cfg_post = {.uri = "/config", .method = HTTP_POST, .handler = config_post};
     httpd_register_uri_handler(h, &u_cfg_post);
+    httpd_uri_t u_media_status = {.uri = "/media/status", .method = HTTP_GET, .handler = media_status_get};
+    httpd_register_uri_handler(h, &u_media_status);
+    httpd_uri_t u_media_image = {.uri = "/media/image", .method = HTTP_POST, .handler = media_image_post};
+    httpd_register_uri_handler(h, &u_media_image);
+    httpd_uri_t u_media_eject = {.uri = "/media/eject", .method = HTTP_POST, .handler = media_eject_post};
+    httpd_register_uri_handler(h, &u_media_eject);
     httpd_uri_t u_ws = {
         .uri = "/ws",
         .method = HTTP_GET,
