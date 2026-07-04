@@ -265,6 +265,45 @@ body {
 }
 .nosignal[hidden] { display: none; }
 
+/* serial console: fills the stage over the video when TERM view is active */
+.term-wrap {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  background: #05070a;
+}
+.term-wrap[hidden] { display: none; }
+.term-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  font: 600 11px/1 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.term-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  box-shadow: 0 0 6px transparent;
+}
+.term-dot.open { background: var(--ok); box-shadow: 0 0 7px var(--ok); }
+.term-dot.closed { background: var(--warn); }
+#terminal {
+  flex: 1;
+  min-height: 0;
+  padding: 6px 8px;
+  overflow: hidden;
+}
+.term-wrap .xterm,
+.term-wrap .xterm .xterm-viewport { background: transparent !important; }
+
 .ns-static {
   position: absolute;
   inset: 0;

@@ -1,4 +1,7 @@
 import "./style.css";
+import "@xterm/xterm/css/xterm.css";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
 
 (function () {
   /* Frame size follows the device's video mode (updated from /stats). */
@@ -21,6 +24,14 @@ import "./style.css";
   const teleMbps = $("tele-mbps");
   const btnModeAbs = $("mode-abs");
   const btnModeRel = $("mode-rel");
+  const viewSeg = $("view-seg");
+  const ptrModeSeg = $("ptr-mode-seg");
+  const btnViewKvm = $("view-kvm");
+  const btnViewTerm = $("view-term");
+  const termWrap = $("term-wrap");
+  const termEl = $("terminal");
+  const termDot = $("term-dot");
+  const termState = $("term-state");
   const btnFullscreen = $("btn-fullscreen");
   const btnHud = $("btn-hud");
   const hud = $("hud");
@@ -322,6 +333,7 @@ import "./style.css";
     ["clients", "VIEWERS"],
     ["vpn", "WIREGUARD"],
     ["audio", "AUDIO"],
+    ["serial", "SERIAL"],
     ["recover", "RECOVERIES"],
     ["encerr", "ENC ERRORS"],
     ["mem", "HEAP / PSRAM"],
@@ -435,6 +447,14 @@ import "./style.css";
     const au = d.audio || "off";
     dset("audio", audioOn ? "playing" : au, au === "streaming" || audioOn ? "ok" : undefined);
     btnAudio.hidden = au === "off";
+    const ser = d.serial || "off";
+    viewSeg.hidden = ser === "off";
+    dset("serial", ser, ser === "open" ? "ok" : ser === "off" ? undefined : "warn");
+    /* When the terminal is open, mirror the device's port state on the dot
+     * (the WS being up only tells us the browser link, not the target's DTR). */
+    if (view === "term" && serialWs && serialWs.readyState === 1) {
+      setTermDot(ser === "open" ? "open" : "closed");
+    }
     dset("clients", String(d.clients));
     dset("recover", String(d.recoveries), d.recoveries > 0 ? "warn" : undefined);
     dset("encerr", String(d.enc_errors), d.enc_errors > 0 ? "err" : undefined);
@@ -735,6 +755,116 @@ import "./style.css";
       refreshMediaStatus();
     }
   });
+
+  /* ---------------- serial console (xterm.js over /serial) ---------------- */
+
+  let view = "kvm"; /* "kvm" | "term" */
+  let term = null;
+  let termFit = null;
+  let serialWs = null;
+  let serialReconnect = null;
+  const termEncoder = new TextEncoder();
+
+  function ensureTerminal() {
+    if (term) return;
+    term = new Terminal({
+      convertEol: false,
+      cursorBlink: true,
+      fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+      fontSize: 13,
+      scrollback: 5000,
+      theme: {
+        background: "#05070a",
+        foreground: "#d7dde8",
+        cursor: "#ffb454",
+        selectionBackground: "rgba(255,180,84,0.3)",
+      },
+    });
+    termFit = new FitAddon();
+    term.loadAddon(termFit);
+    term.open(termEl);
+    fitTerm();
+    /* Browser keystrokes -> target. Send as UTF-8 bytes over the binary WS. */
+    term.onData((data) => {
+      if (serialWs && serialWs.readyState === 1) {
+        serialWs.send(termEncoder.encode(data));
+      }
+    });
+  }
+
+  function fitTerm() {
+    if (termFit && view === "term") {
+      try { termFit.fit(); } catch (e) { /* container not laid out yet */ }
+    }
+  }
+
+  function setTermDot(state) {
+    termDot.classList.toggle("open", state === "open");
+    termDot.classList.toggle("closed", state === "closed");
+    termState.textContent =
+      state === "open" ? "serial console — port open"
+      : state === "closed" ? "serial console — waiting for target to open the port"
+      : "serial console — disconnected";
+  }
+
+  function serialConnect() {
+    if (serialWs && (serialWs.readyState === 0 || serialWs.readyState === 1)) return;
+    const ws = new WebSocket(proto + "://" + location.host + "/serial");
+    ws.binaryType = "arraybuffer";
+    serialWs = ws;
+    ws.onopen = () => setTermDot("closed");
+    ws.onmessage = (ev) => {
+      if (!term) return;
+      if (ev.data instanceof ArrayBuffer) {
+        term.write(new Uint8Array(ev.data));
+      } else if (typeof ev.data === "string") {
+        term.write(ev.data);
+      }
+    };
+    ws.onclose = () => {
+      setTermDot("off");
+      if (view === "term") {
+        clearTimeout(serialReconnect);
+        serialReconnect = setTimeout(serialConnect, 1200);
+      }
+    };
+    ws.onerror = () => { try { ws.close(); } catch (e) {} };
+  }
+
+  function serialDisconnect() {
+    clearTimeout(serialReconnect);
+    if (serialWs) {
+      try { serialWs.close(); } catch (e) {}
+      serialWs = null;
+    }
+  }
+
+  function setView(next) {
+    if (next === view) return;
+    view = next;
+    const term_active = view === "term";
+    btnViewKvm.classList.toggle("active", !term_active);
+    btnViewTerm.classList.toggle("active", term_active);
+    termWrap.hidden = !term_active;
+    /* Pointer-mode control is meaningless in the terminal; hide it there. */
+    ptrModeSeg.hidden = term_active;
+    if (term_active) {
+      /* Release any KVM capture so keystrokes go to the terminal, not HID. */
+      releaseAllKeys();
+      if (pointerLockActive()) document.exitPointerLock();
+      if (document.activeElement === canvas) canvas.blur();
+      ensureTerminal();
+      serialConnect();
+      requestAnimationFrame(() => { fitTerm(); term && term.focus(); });
+    } else {
+      serialDisconnect();
+      setTermDot("off");
+    }
+  }
+
+  btnViewKvm.addEventListener("click", () => setView("kvm"));
+  btnViewTerm.addEventListener("click", () => setView("term"));
+  window.addEventListener("resize", fitTerm);
 
   /* ---------------- WebSocket input ---------------- */
 

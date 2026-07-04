@@ -16,6 +16,7 @@ set(p4kvm_capture_srcs
     "tc358743.c"
     "usb_hid.c"
     "usb_msc.c"
+    "usb_serial.c"
     "video_mode.c"
 )
 

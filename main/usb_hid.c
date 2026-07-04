@@ -22,12 +22,29 @@
 
 static const char *TAG = "usb_hid";
 
-/* Composite: HID (interface 0) + raw-block MSC (interface 1). */
-#define TUSB_DESC_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN + TUD_MSC_DESC_LEN)
-
+/* Composite device: HID (itf 0) + raw-block MSC (itf 1), and, when the serial
+ * console is compiled in, CDC-ACM (itf 2 comm + itf 3 data). Interface and
+ * endpoint numbering is shared between the FS and HS config descriptors; the
+ * two differ only in bulk max-packet size (64 on FS, 512 on HS). */
+#define ITF_NUM_HID 0
+#define ITF_NUM_MSC 1
 #define EPNUM_HID_IN 0x81
 #define EPNUM_MSC_OUT 0x02
 #define EPNUM_MSC_IN 0x82
+
+#if CONFIG_TINYUSB_CDC_ENABLED
+#define ITF_NUM_CDC 2      /* CDC comm (+ data interface is 3, from the IAD) */
+#define ITF_COUNT 4
+#define EPNUM_CDC_NOTIF 0x83
+#define EPNUM_CDC_OUT 0x04
+#define EPNUM_CDC_IN 0x84
+#define CDC_DESC_LEN TUD_CDC_DESC_LEN
+#else
+#define ITF_COUNT 2
+#define CDC_DESC_LEN 0
+#endif
+
+#define TUSB_DESC_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN + TUD_MSC_DESC_LEN + CDC_DESC_LEN)
 
 /** Absolute pointer report ID (keyboard = 1, relative mouse = 2). */
 #define P4KVM_HID_REPORT_ID_ABS 3
@@ -77,22 +94,32 @@ static const char *s_string_descriptor[] = {
     "0",
     "HID",
     "p4kvm Virtual Media",
+    "p4kvm Serial Console",
 };
 
-/* Composite config: HID at interface 0, MSC at interface 1. Bulk endpoints must
- * be 512 bytes on high speed and <=64 on full speed, so the two speeds get
- * distinct config descriptors that differ only in the MSC bulk max-packet size.
- * itf_count = 2, string index 5 names the MSC interface. */
+/* The CDC block is appended (or omitted) as one descriptor fragment so the FS
+ * and HS arrays stay in step. TUD_CDC_DESCRIPTOR emits the IAD + comm + data
+ * interfaces; the notification EP is interrupt-IN (8 bytes), the data EPs are
+ * bulk (64 on FS, 512 on HS). String index 6 names the serial interface. */
+#if CONFIG_TINYUSB_CDC_ENABLED
+#define P4KVM_CDC_FRAGMENT(bulk_epsize) \
+    , TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 6, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, (bulk_epsize))
+#else
+#define P4KVM_CDC_FRAGMENT(bulk_epsize)
+#endif
+
 static const uint8_t s_fs_config_descriptor[] = {
-    TUD_CONFIG_DESCRIPTOR(1, 2, 0, TUSB_DESC_TOTAL_LEN, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100),
-    TUD_HID_DESCRIPTOR(0, 4, false, sizeof(s_hid_report_descriptor), EPNUM_HID_IN, 16, 10),
-    TUD_MSC_DESCRIPTOR(1, 5, EPNUM_MSC_OUT, EPNUM_MSC_IN, 64),
+    TUD_CONFIG_DESCRIPTOR(1, ITF_COUNT, 0, TUSB_DESC_TOTAL_LEN, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100),
+    TUD_HID_DESCRIPTOR(ITF_NUM_HID, 4, false, sizeof(s_hid_report_descriptor), EPNUM_HID_IN, 16, 10),
+    TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, 5, EPNUM_MSC_OUT, EPNUM_MSC_IN, 64)
+    P4KVM_CDC_FRAGMENT(64)
 };
 
 static const uint8_t s_hs_config_descriptor[] = {
-    TUD_CONFIG_DESCRIPTOR(1, 2, 0, TUSB_DESC_TOTAL_LEN, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100),
-    TUD_HID_DESCRIPTOR(0, 4, false, sizeof(s_hid_report_descriptor), EPNUM_HID_IN, 16, 10),
-    TUD_MSC_DESCRIPTOR(1, 5, EPNUM_MSC_OUT, EPNUM_MSC_IN, 512),
+    TUD_CONFIG_DESCRIPTOR(1, ITF_COUNT, 0, TUSB_DESC_TOTAL_LEN, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100),
+    TUD_HID_DESCRIPTOR(ITF_NUM_HID, 4, false, sizeof(s_hid_report_descriptor), EPNUM_HID_IN, 16, 10),
+    TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, 5, EPNUM_MSC_OUT, EPNUM_MSC_IN, 512)
+    P4KVM_CDC_FRAGMENT(512)
 };
 
 /* Explicit device descriptor (Espressif VID, TinyUSB generic PID) so the

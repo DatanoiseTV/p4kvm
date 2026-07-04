@@ -17,7 +17,11 @@
         <span class="tele" id="tele" title="draw fps / link rate">
           <b id="tele-fps">--</b><i>fps</i><em>·</em><b id="tele-mbps">--</b><i>Mb/s</i>
         </span>
-        <div class="seg" role="group" aria-label="Pointer mode">
+        <div class="seg" role="group" aria-label="View" id="view-seg" hidden>
+          <button type="button" id="view-kvm" class="seg-b active" title="KVM: HDMI video + keyboard/mouse">KVM</button>
+          <button type="button" id="view-term" class="seg-b" title="Serial console (USB CDC) terminal">TERM</button>
+        </div>
+        <div class="seg" role="group" aria-label="Pointer mode" id="ptr-mode-seg">
           <button type="button" id="mode-abs" class="seg-b" title="Absolute pointer (virtual tablet): cursor follows 1:1, no capture needed">TABLET</button>
           <button type="button" id="mode-rel" class="seg-b" title="Relative pointer (pointer lock): for BIOS/UEFI and games">REL</button>
         </div>
@@ -56,6 +60,13 @@
           <div class="hud-row"><span class="hud-k">PTR</span><span id="hud-ptr">idle</span></div>
           <div class="hud-row"><span class="hud-k">HELD</span><span id="hud-held">--</span></div>
           <div class="hud-row"><span class="hud-k">KEYS</span><span id="hud-keys">--</span></div>
+        </div>
+        <div class="term-wrap" id="term-wrap" hidden>
+          <div class="term-bar">
+            <span class="term-dot" id="term-dot"></span>
+            <span id="term-state">serial console</span>
+          </div>
+          <div id="terminal"></div>
         </div>
       </div>
     </main>

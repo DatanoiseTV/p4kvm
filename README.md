@@ -133,6 +133,90 @@ playback starts on click (browser gesture requirement). Sample rate is assumed
 48 kHz - the only rate HDMI requires and the only one the EDID advertises.
 Hardware-unverified until the I2S pads are actually wired.
 
+## Virtual media (USB mass storage)
+
+The device presents a removable USB drive to the target alongside the keyboard
+and mouse, so you can boot a rescue/installer image without physical media.
+Backed by a PSRAM ramdisk: it comes up as a blank, formatted 1.44 MB FAT12
+floppy, and the drawer's **Virtual Media** panel lets you upload an arbitrary
+`.img`/`.iso` (up to 12 MiB - the PSRAM cap, shared with the video pipeline)
+and mount it. The image streams straight from the browser into PSRAM; on mount
+the device raises a SCSI UNIT ATTENTION so the target re-reads the new capacity.
+
+- Read-only by default (a booting target cannot corrupt the image). Tick
+  "writable" only if you want the target to modify it.
+- **Eject** reverts to the blank floppy.
+- Endpoints for scripting: `GET /media/status`, `POST /media/image?writable=0|1`
+  (raw image as the request body), `POST /media/eject`.
+
+12 MiB fits DOS/FreeDOS boot floppies, UEFI shell images, memtest, and the
+1-2 MB `netboot.xyz` iPXE ISO (which then network-boots its full menu, so the
+image on the device stays tiny). Larger ISOs exceed PSRAM; SD-card / network
+streaming is not implemented yet.
+
+Builds and links; not yet verified against a live host (enumeration of the
+composite device and boot-from-image are untested on hardware).
+
+## Serial console (USB CDC)
+
+With `CONFIG_TINYUSB_CDC_ENABLED` (on by default) the device also exposes a
+virtual serial port to the target - a COM port on Windows, `/dev/ttyACM0` on
+Linux - as a third USB function. The top bar gains a **KVM / TERM** toggle;
+TERM switches the stage to an in-browser terminal (xterm.js) bridged to that
+serial port over the `/serial` WebSocket. Whatever the target prints on its USB
+serial console appears in the terminal, and your keystrokes are written back.
+
+This makes the P4KVM a serial-over-LAN console in addition to a video KVM,
+which is what you want for headless boxes, kernel panics that never reach the
+framebuffer, U-Boot/BIOS serial menus, and switches/routers.
+
+If a target enumerates the 4-interface composite (HID+MSC+CDC) poorly, set
+`CONFIG_TINYUSB_CDC_ENABLED=n` and rebuild - the descriptor falls back to plain
+HID+MSC and the TERM toggle disappears.
+
+Builds and links; the CDC enumeration and the end-to-end bridge are not yet
+verified on hardware.
+
+### Making the serial console work on a Linux target (without breaking things)
+
+The virtual COM port is just a USB CDC-ACM device (VID `0x303a`, PID `0x4004`).
+Two things bite on Linux, both on the **target** side:
+
+1. **ModemManager probes `ttyACM*` and injects AT commands.** On desktop
+   distros ModemManager opens any new `ttyACM` looking for a modem, which dumps
+   garbage into your console session. Tell it to leave this device alone with a
+   udev rule on the target:
+
+   ```
+   # /etc/udev/rules.d/99-p4kvm-serial.rules
+   SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="4004", ENV{ID_MM_DEVICE_IGNORE}="1"
+   ```
+
+   Then `sudo udevadm control --reload && sudo udevadm trigger`. (If you prefer
+   not to touch udev, `systemctl mask ModemManager` also works but disables it
+   globally.)
+
+2. **Nothing is on the port until the target puts a console on it.** The device
+   only forwards bytes; the target must actually write to `ttyACM0`. To get a
+   login shell in the browser terminal, enable a getty on the target:
+
+   ```
+   sudo systemctl enable --now serial-getty@ttyACM0.service
+   ```
+
+   To also capture kernel boot messages and the bootloader, add
+   `console=ttyACM0,115200` to the kernel command line (and the equivalent in
+   your bootloader). The USB link ignores the baud rate, but keep it consistent
+   so `stty`/`agetty` and any tooling agree.
+
+Notes:
+- The MSC drive auto-mounts under GNOME/udisks like any USB stick; that is
+  harmless. Leave it read-only unless you intend the target to write to it.
+- The HID keyboard/mouse and the absolute-pointer "tablet" are standard and
+  need no target configuration.
+- The udev rule matches by VID/PID, which is shared across the whole composite
+  device; it only affects the `tty` subsystem, so HID and MSC are untouched.
+
 ## WireGuard
 
 Built-in WireGuard client (`menuconfig → P4KVM → Enable WireGuard tunnel`,

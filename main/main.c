@@ -15,6 +15,7 @@
 #include "jpeg_frame.h"
 #include "net_common.h"
 #include "usb_hid.h"
+#include "usb_serial.h"
 #include "video_mode.h"
 #include "wifi_net.h"
 #include "wireguard_net.h"
@@ -34,6 +35,7 @@ void app_main(void)
     net_mdns_init();
     ESP_ERROR_CHECK(wireguard_net_start());
     ESP_ERROR_CHECK(usb_hid_init());
+    ESP_ERROR_CHECK(usb_serial_init()); /* CDC serial console (no-op if compiled out) */
     ESP_ERROR_CHECK(atx_ctrl_init());
     ESP_ERROR_CHECK(audio_stream_init());
 

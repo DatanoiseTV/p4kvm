@@ -55,6 +55,14 @@ CONFIG_TINYUSB_HID_COUNT=1
 CONFIG_TINYUSB_MSC_ENABLED=y
 CONFIG_TINYUSB_MSC_BUFSIZE=8192
 
+# USB CDC-ACM serial console: a third function (virtual COM / ttyACM on the
+# target) bridged to a browser terminal over /serial. Disabling this flips the
+# composite descriptor back to HID+MSC (usb_hid.c / usb_serial.c are guarded on
+# it), a safe fallback if a target enumerates the 4-interface device poorly.
+CONFIG_TINYUSB_CDC_ENABLED=y
+CONFIG_TINYUSB_CDC_RX_BUFSIZE=512
+CONFIG_TINYUSB_CDC_TX_BUFSIZE=512
+
 # ESP32-P4 AP-HEX PSRAM size (e.g. 32 MB) is detected at boot - no separate "32MB" Kconfig.
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_HEX=y
