@@ -299,8 +299,13 @@ void capture_mjpeg_run(capture_ctx_t *c)
         size_t bs_written = 0;
         esp_err_t ber = bitscrambler_loopback_run(bs, src, c->frame_bytes, yvyu_buf, c->frame_bytes, &bs_written);
         if (ber != ESP_OK || bs_written != c->frame_bytes) {
-            ESP_LOGW(CAPTURE_LOG_TAG, "bitscrambler %s (wrote %zu of %zu)", esp_err_to_name(ber), bs_written,
-                     c->frame_bytes);
+            /* Throttled: at frame rate this would otherwise flood the UART. */
+            static uint32_t s_bs_err_logs;
+            g_video_stats.enc_errors++;
+            if ((s_bs_err_logs++ % 64u) == 0u) {
+                ESP_LOGW(CAPTURE_LOG_TAG, "bitscrambler %s (wrote %zu of %zu, %lu drops)", esp_err_to_name(ber),
+                         bs_written, c->frame_bytes, (unsigned long)s_bs_err_logs);
+            }
             continue;
         }
         enc_src = yvyu_buf;

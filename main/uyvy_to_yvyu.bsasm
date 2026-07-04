@@ -11,8 +11,11 @@
 
 cfg eof_on downstream
 # Prefetch loads 64 bits; we consume 32 per instruction, so on input EOF the
-# pipeline still holds 8 bytes that must be flushed downstream.
-cfg trailing_bytes 8
+# pipeline still holds up to 8 bytes that must be flushed downstream. Measured
+# on rev 1.3 silicon: with trailing_bytes 8 the output came up 4 bytes short
+# (the downstream counter starts before the final word drains), so budget 16;
+# surplus zero bytes fall past the output DMA descriptor list and are clipped.
+cfg trailing_bytes 16
 cfg prefetch true
 
 loop:
