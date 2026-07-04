@@ -30,15 +30,25 @@
  * same PSRAM budget and lowers the chance of the encoder reading a buffer the
  * CSI DMA is about to overwrite after a stall.
  */
-#if CONFIG_P4KVM_PIPELINE_YUV422_BS
+#if CONFIG_P4KVM_PIPELINE_YUV422
 #define CAPTURE_PIXEL_BPP 16u
 #define CAPTURE_CSI_DATA_TYPE 0x1eu /* CSI-2 YUV422 8-bit */
 #define CAPTURE_CAM_COLOR CAM_CTLR_COLOR_YUV422_UYVY
 #define CAPTURE_ISP_COLOR ISP_COLOR_YUV422
 #define CAPTURE_JPEG_SRC_TYPE JPEG_ENCODE_IN_FORMAT_YUV422
 #define CAPTURE_JPEG_SUBSAMPLE JPEG_DOWN_SAMPLING_YUV422 /* encoder requires 4:2:2 for YUV422 input */
-#define CAPTURE_PIPELINE_NAME "yuv422-bs"
-#define CAPTURE_NEEDS_REORDER 1 /* UYVY → YVYU BitScrambler pass before encode */
+#define CAPTURE_PIPELINE_NAME "yuv422"
+/*
+ * No byte reorder: hardware-verified (rev 1.3, color-bar test) that the JPEG
+ * encoder's "YVYU" FOURCC names the little-endian 32-bit word value - the
+ * byte order it consumes is U Y V Y, which is exactly the TC358743's native
+ * UYVY stream. A BitScrambler pass (main/uyvy_to_yvyu.bsasm, kept for
+ * reference) is therefore unnecessary; it was also measured at ~28 MB/s
+ * (147 ms per 1080p frame), far too slow for 30 fps. If a future format
+ * really needs reordering, set this to 1 and re-enable the bsasm assembly
+ * in main/CMakeLists.txt.
+ */
+#define CAPTURE_NEEDS_REORDER 0
 #define CAPTURE_FB_COUNT 3
 #else
 #define CAPTURE_PIXEL_BPP 24u

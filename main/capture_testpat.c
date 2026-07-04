@@ -5,8 +5,8 @@
  * Animated test-pattern source: color bars with a sweeping stripe, generated
  * by the CPU into the same framebuffer ring the CSI DMA would fill. Publishes
  * frames through the identical done_fb/semaphore contract, so the entire
- * downstream pipeline (BitScrambler reorder, JPEG encode, HTTP stream, web UI,
- * stats) runs unmodified without the TC358743/CSI hardware attached.
+ * downstream pipeline (JPEG encode, HTTP stream, web UI, stats) runs
+ * unmodified without the TC358743/CSI hardware attached.
  */
 #include "capture_priv.h"
 
@@ -55,7 +55,7 @@ static size_t s_row_bytes;
 /** Write pixels [x0, x0+n) of a row buffer in the native format. n and x0 even for YUV. */
 static void testpat_fill_span(uint8_t *row, uint32_t x0, uint32_t n, const testpat_color_t *c)
 {
-#if CONFIG_P4KVM_PIPELINE_YUV422_BS
+#if CONFIG_P4KVM_PIPELINE_YUV422
     /* UYVY: 4 bytes per 2 pixels. */
     uint8_t *p = row + (size_t)(x0 / 2u) * 4u;
     for (uint32_t i = 0; i < n / 2u; i++) {

@@ -138,7 +138,8 @@ void capture_fill_esp_cam_color_types(esp_cam_ctlr_csi_config_t *csi, esp_isp_pr
 {
     /* Same in/out type keeps the CSI bridge color converter in bypass (the
      * converter itself is rev >= 3.0-only). For YUV422, UYVY lands in DRAM
-     * as-is and the BitScrambler pass reorders it for the JPEG encoder. */
+     * as-is - which is exactly the byte order the JPEG encoder consumes
+     * (hardware-verified; see capture_priv.h). */
     csi->input_data_color_type = CAPTURE_CAM_COLOR;
     csi->output_data_color_type = CAPTURE_CAM_COLOR;
     isp->input_data_color_type = CAPTURE_ISP_COLOR;
@@ -208,7 +209,7 @@ capture_ctx_t *capture_hw_init_start(void)
     };
     ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_cfg, &i2c_bus));
     ESP_ERROR_CHECK(tc358743_probe(i2c_bus, NULL, &s_cap.tc));
-#if CONFIG_P4KVM_PIPELINE_YUV422_BS
+#if CONFIG_P4KVM_PIPELINE_YUV422
     tc358743_select_csi_uyvy422(s_cap.tc, true);
 #endif
     ESP_ERROR_CHECK(tc358743_init_streaming(s_cap.tc));

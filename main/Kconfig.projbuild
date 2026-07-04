@@ -19,20 +19,19 @@ menu "P4KVM HDMI → CSI"
             RGB888: TC358743 outputs RGB888 (CSI-2 DT 0x24), 6.2 MB per 1080p
             frame, JPEG encoder converts to 4:2:0 (smallest files on the wire).
 
-            YUV422 + BitScrambler: TC358743 outputs UYVY422 (DT 0x1E), 4.1 MB
-            per frame (one third less MIPI and CSI-DMA bandwidth). The ESP32-P4
-            JPEG encoder only accepts YVYU byte order, and the CSI bridge color
-            converter needs chip rev >= 3.0, so on rev 1.x the BitScrambler
-            peripheral reorders UYVY to YVYU via DMA (no CPU copy). Output JPEG
-            is 4:2:2, roughly 15-25 %% larger at equal quality. Compare both
-            with /stats on your setup; the bottleneck (PSRAM vs Ethernet)
-            decides which one wins.
+            YUV422: TC358743 outputs UYVY422 (DT 0x1E), 4.1 MB per frame (one
+            third less MIPI and CSI-DMA bandwidth), fed directly to the JPEG
+            encoder - hardware-verified that the encoder's byte order is
+            U Y V Y, i.e. native UYVY (its "YVYU" format id names the 32-bit
+            word value). Output JPEG is 4:2:2, somewhat larger on the wire at
+            equal quality than RGB888's 4:2:0. Compare both with /stats; the
+            bottleneck (PSRAM vs Ethernet) decides which wins.
 
         config P4KVM_PIPELINE_RGB888
             bool "RGB888 (JPEG 4:2:0 output)"
 
-        config P4KVM_PIPELINE_YUV422_BS
-            bool "YUV422 via BitScrambler reorder (JPEG 4:2:2 output)"
+        config P4KVM_PIPELINE_YUV422
+            bool "YUV422 direct (JPEG 4:2:2 output)"
 
     endchoice
 

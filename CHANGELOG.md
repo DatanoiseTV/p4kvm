@@ -15,12 +15,15 @@ All notable changes to this project are documented here. The format follows
   the selected pipeline's native pixel format, published through the same
   ring/semaphore contract as the CSI DMA - exercises BitScrambler, JPEG,
   streaming, UI and HID without the HDMI-CSI module attached.
-- Alternative YUV422 capture pipeline (`P4KVM_PIPELINE_YUV422_BS`): TC358743
-  outputs UYVY (CSI-2 DT 0x1E, 4.1 MB/frame instead of 6.2 MB), the ESP32-P4
-  BitScrambler reorders UYVY to the YVYU byte order the hardware JPEG encoder
-  requires (a DMA loopback pass, no CPU copy; needed because the CSI bridge
-  color converter is rev >= 3.0 silicon only). Output JPEG is 4:2:2. RGB888
-  (4:2:0 output) remains the default; compare with `/stats` on your network.
+- Alternative YUV422 capture pipeline (`P4KVM_PIPELINE_YUV422`): TC358743
+  outputs UYVY (CSI-2 DT 0x1E, 4.1 MB/frame instead of 6.2 MB), consumed by
+  the hardware JPEG encoder directly. Hardware-verified that the encoder's
+  "YVYU" format id names the 32-bit word value - byte-wise it eats native
+  UYVY, so no conversion stage exists. (A BitScrambler reorder pass built on
+  the opposite assumption produced swapped chroma and measured ~28 MB/s /
+  147 ms per 1080p frame; it was removed, main/uyvy_to_yvyu.bsasm remains as
+  reference.) Output JPEG is 4:2:2. RGB888 (4:2:0 output) remains the
+  default; compare with `/stats` on your network.
 - USB HID absolute pointer ("virtual tablet", report ID 3, 0..32767 axes).
   Tablet mode is now the default in the web UI: the host cursor lands exactly
   where the browser pointer is, with no pointer lock and no drift from host

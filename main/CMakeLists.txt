@@ -42,7 +42,8 @@ idf_component_register(
         espressif__esp_tinyusb
 )
 
-if(CONFIG_P4KVM_PIPELINE_YUV422_BS)
-    # Assembles uyvy_to_yvyu.bsasm and embeds it as bitscrambler_program_uyvy_to_yvyu.
-    target_bitscrambler_add_src("uyvy_to_yvyu.bsasm")
-endif()
+# The BitScrambler reorder pass turned out to be unnecessary (the JPEG
+# encoder consumes native UYVY; see capture_priv.h) and measured ~28 MB/s -
+# too slow for 1080p30 anyway. uyvy_to_yvyu.bsasm stays in the tree for
+# reference; if CAPTURE_NEEDS_REORDER is ever set again, re-add:
+#   target_bitscrambler_add_src("uyvy_to_yvyu.bsasm")

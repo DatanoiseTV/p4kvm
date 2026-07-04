@@ -59,23 +59,25 @@ Two build-time pipelines (`menuconfig → P4KVM → CSI capture pixel pipeline`)
   into PSRAM), hardware JPEG encodes with 4:2:0 subsampling - the smallest files on
   the wire, which matters because the Ethernet PHY is 100 Mbit/s and is usually the
   throughput ceiling at 1080p30.
-- **YUV422 + BitScrambler**: TC358743 sends UYVY (4.1 MB per frame, one third less
-  MIPI/CSI-DMA bandwidth). The P4's JPEG encoder only accepts YVYU byte order and
-  the rev-1.x silicon cannot reorder in the CSI bridge, so the BitScrambler
-  peripheral rotates each 32-bit word (UYVY → YVYU) in a DMA loopback pass with no
-  CPU involvement. The resulting JPEG is 4:2:2, which is estimated (not yet
-  measured on this hardware) at roughly 15-25 % larger at equal quality. Whether
-  this nets out faster than RGB888 depends on where your setup bottlenecks
-  (PSRAM vs Ethernet) - flash both and compare `/stats`.
+- **YUV422**: TC358743 sends UYVY (4.1 MB per frame, one third less MIPI/CSI-DMA
+  bandwidth), fed directly to the JPEG encoder. Hardware-verified on rev 1.3 with
+  the test pattern: the encoder's byte order is U Y V Y - native UYVY - because
+  its "YVYU" format id names the little-endian 32-bit word value, not the byte
+  sequence. (A BitScrambler reorder pass was built on that false premise; the
+  color-bar test exposed it, and it also measured ~28 MB/s = 147 ms per frame -
+  `main/uyvy_to_yvyu.bsasm` stays in the tree for reference only.) Output JPEG is
+  4:2:2, measured ~260 KB/frame at quality 70 on the test pattern vs the smaller
+  4:2:0 RGB888 output. Encode time measured 29 ms/frame at 1080p (360 MHz CPU,
+  test pattern writing PSRAM concurrently).
 
 Input is fixed at 1080p30 by the EDID (`tc358743_edid_1080p30.h`). 1080p60 does not
 fit 2 MIPI lanes at this link rate even as YUV422, so a faster EDID would not help.
 
-**Verification status**: both pipelines, auth, ATX and test-pattern builds compile
-against ESP-IDF 6.0 and the web bundle builds; the multipart stream parser has a
-host-side test. The YUV422 color path (BitScrambler byte order), fps/latency
-numbers, and the recovery ladder have NOT yet been validated on hardware - use the
-test pattern and `/stats` to do that on your board.
+**Verification status** (rev 1.3 board, WiFi, test pattern): boots, WiFi + mDNS +
+HTTP + `/stats` + MJPEG streaming and the YUV422 encoder byte order are verified on
+hardware; the multipart stream parser has a host-side test. NOT yet validated:
+real HDMI capture through the TC358743, HID input against a live host, the
+recovery ladder, ATX outputs, Ethernet, and auth-enabled operation.
 
 ## Test pattern mode (no HDMI-CSI module needed)
 
