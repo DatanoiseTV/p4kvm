@@ -42,6 +42,8 @@ void app_main(void)
     g_jpeg_frame.front_idx = -1;
     g_jpeg_frame.jpeg_quality = (uint8_t)CONFIG_P4KVM_JPEG_QUALITY;
     jpeg_quality_load_from_nvs();
+    g_jpeg_frame.stream_max_fps = 30; /* default cap; per-viewer adaptive tunes below this */
+    stream_max_fps_load_from_nvs();
     g_jpeg_frame.jpeg_buf[0] = NULL;
     g_jpeg_frame.jpeg_buf[1] = NULL;
     g_jpeg_frame.jpeg_buf[2] = NULL;

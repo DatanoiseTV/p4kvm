@@ -349,7 +349,7 @@ static esp_err_t stats_get(httpd_req_t *req)
                      "\"hostname\":\"" CONFIG_P4KVM_MDNS_HOSTNAME "\","
                      "\"mode\":\"%s\",\"width\":%lu,\"height\":%lu,"
                      "\"cap_fps\":%u.%u,\"enc_fps\":%u.%u,"
-                     "\"bs_us\":%u,\"enc_us\":%u,\"jpeg_bytes\":%u,\"quality\":%u,"
+                     "\"bs_us\":%u,\"enc_us\":%u,\"jpeg_bytes\":%u,\"quality\":%u,\"max_fps\":%u,"
                      "\"clients\":%d,\"hdmi_locked\":%s,\"sys_status\":%u,"
                      "\"cap_frames\":%u,\"enc_frames\":%u,\"enc_errors\":%u,\"recoveries\":%u,"
                      "\"atx_power\":%s,\"atx_reset\":%s,\"usb_hid\":%s,\"wg\":\"%s\",\"audio\":\"%s\","
@@ -359,7 +359,8 @@ static esp_err_t stats_get(httpd_req_t *req)
                      (unsigned long)video_mode_vres(), (unsigned)(cap_x10 / 10u), (unsigned)(cap_x10 % 10u),
                      (unsigned)(enc_x10 / 10u), (unsigned)(enc_x10 % 10u), (unsigned)g_video_stats.bs_us,
                      (unsigned)g_video_stats.enc_us, (unsigned)g_video_stats.jpeg_bytes,
-                     (unsigned)g_jpeg_frame.jpeg_quality, jpeg_frame_stream_clients(),
+                     (unsigned)g_jpeg_frame.jpeg_quality, (unsigned)g_jpeg_frame.stream_max_fps,
+                     jpeg_frame_stream_clients(),
                      g_video_stats.hdmi_locked ? "true" : "false", (unsigned)g_video_stats.sys_status,
                      (unsigned)g_video_stats.cap_frames, (unsigned)g_video_stats.enc_frames,
                      (unsigned)g_video_stats.enc_errors, (unsigned)g_video_stats.recoveries,
@@ -712,6 +713,33 @@ static esp_err_t jpeg_quality_get(httpd_req_t *req)
     return httpd_resp_send(req, resp, (size_t)n);
 }
 
+/** GET /stream-fps optional query `fps=0..60` sets the max-FPS cap (0 = uncapped);
+ *  response body is the current cap (text/plain). Each viewer still adapts below
+ *  the cap when its link is congested. */
+static esp_err_t stream_fps_get(httpd_req_t *req)
+{
+    AUTH_GATE(req);
+    char query[96];
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        char val[8];
+        if (httpd_query_key_value(query, "fps", val, sizeof(val)) == ESP_OK) {
+            int f = atoi(val);
+            if (f >= 0 && f <= 60) {
+                g_jpeg_frame.stream_max_fps = (uint8_t)f;
+                (void)stream_max_fps_save_to_nvs((uint8_t)f);
+            }
+        }
+    }
+    char resp[16];
+    int n = snprintf(resp, sizeof(resp), "%u\n", (unsigned)g_jpeg_frame.stream_max_fps);
+    if (n <= 0 || n >= (int)sizeof(resp)) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "stream-fps");
+    }
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, resp, (size_t)n);
+}
+
 /**
  * While httpd_req_async_handler_begin() is in effect, the session fd is not in the server's select()
  * set, so disconnects are invisible until we send or call httpd_req_async_handler_complete(), that
@@ -745,6 +773,12 @@ static void stream_worker_task(void *arg)
     /* Wait for the next camera frame after connect, avoids replaying one stale JPEG in a tight loop. */
     uint32_t last_seq = g_jpeg_frame.frame_seq;
 
+    /* Rate control (per viewer): last_send_us gates against the max-FPS cap;
+     * eff_extra_us is the adaptive back-off added on top when this link is
+     * congested (0 = run at the cap). See the send path below. */
+    int64_t last_send_us = 0;
+    uint32_t eff_extra_us = 0;
+
     while (1) {
         bool stop = false;
         while (g_jpeg_frame.frame_seq == last_seq) {
@@ -769,6 +803,21 @@ static void stream_worker_task(void *arg)
         }
         if (stop) {
             break;
+        }
+
+        /* Honor the max-FPS cap plus this link's adaptive back-off: if the newest
+         * frame arrived sooner than the target interval, drop the intervening
+         * frames (skip to the newest published) rather than sending them. */
+        {
+            uint8_t cap = g_jpeg_frame.stream_max_fps;
+            uint32_t cap_us = cap ? (1000000u / cap) : 0;
+            uint32_t target_us = cap_us > eff_extra_us ? cap_us : eff_extra_us;
+            if (target_us && last_send_us != 0) {
+                if ((esp_timer_get_time() - last_send_us) < (int64_t)target_us) {
+                    last_seq = g_jpeg_frame.frame_seq; /* wait for a fresher frame */
+                    continue;
+                }
+            }
         }
 
         if (xSemaphoreTake(g_jpeg_frame.xmit_mutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
@@ -829,6 +878,7 @@ static void stream_worker_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
+        int64_t send_t0 = esp_timer_get_time();
         esp_err_t se = httpd_resp_send_chunk(req, hdr, hl);
         if (se == ESP_OK) {
             se = httpd_resp_send_chunk(req, (const char *)g_jpeg_frame.jpeg_buf[slot], copy_len);
@@ -843,6 +893,29 @@ static void stream_worker_task(void *arg)
             ESP_LOGD(TAG, "stream end %s", esp_err_to_name(se));
             break;
         }
+        /* Adapt to link speed: a send that eats most of the frame budget means
+         * the socket is back-pressured (slow client / thin tunnel), so raise this
+         * viewer's interval toward a 1 fps floor; a fast send eases it back to the
+         * cap. This keeps a congested stream alive at a lower rate instead of
+         * blocking until send_wait_timeout and forcing a browser reconnect. */
+        {
+            int64_t send_us = esp_timer_get_time() - send_t0;
+            uint8_t cap = g_jpeg_frame.stream_max_fps;
+            uint32_t budget = cap ? (1000000u / cap) : (1000000u / 60u);
+            if (send_us > (int64_t)(budget - budget / 4)) {
+                uint32_t base = eff_extra_us ? eff_extra_us : budget;
+                eff_extra_us = base + base / 3;
+                if (eff_extra_us > 1000000u) {
+                    eff_extra_us = 1000000u; /* 1 fps floor */
+                }
+            } else if (send_us < (int64_t)(budget / 4)) {
+                eff_extra_us = eff_extra_us > budget ? (eff_extra_us - eff_extra_us / 8) : 0;
+                if (eff_extra_us < budget) {
+                    eff_extra_us = 0;
+                }
+            }
+        }
+        last_send_us = esp_timer_get_time();
         last_seq = seq_snap;
     }
     jpeg_frame_stream_leave();
@@ -957,6 +1030,8 @@ httpd_handle_t http_server_start(void)
     httpd_register_uri_handler(h, &u_stream);
     httpd_uri_t u_jpeg_q = {.uri = "/jpeg-quality", .method = HTTP_GET, .handler = jpeg_quality_get};
     httpd_register_uri_handler(h, &u_jpeg_q);
+    httpd_uri_t u_stream_fps = {.uri = "/stream-fps", .method = HTTP_GET, .handler = stream_fps_get};
+    httpd_register_uri_handler(h, &u_stream_fps);
     httpd_uri_t u_stats = {.uri = "/stats", .method = HTTP_GET, .handler = stats_get};
     httpd_register_uri_handler(h, &u_stats);
     httpd_uri_t u_atx = {.uri = "/atx", .method = HTTP_POST, .handler = atx_post};

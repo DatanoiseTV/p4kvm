@@ -32,6 +32,9 @@ typedef struct {
     size_t jpeg_cap;
     /** Encoder quality 1–100; writable at runtime (see `/jpeg-quality`). */
     volatile uint8_t jpeg_quality;
+    /** Max MJPEG frames/s per viewer (1–60), 0 = uncapped. Each stream worker
+     *  also adapts below this when its link is congested (see `/stream-fps`). */
+    volatile uint8_t stream_max_fps;
 } jpeg_frame_slot_t;
 
 extern jpeg_frame_slot_t g_jpeg_frame;
@@ -49,3 +52,8 @@ int jpeg_frame_pick_encode_slot(void);
 void jpeg_quality_load_from_nvs(void);
 /** Persist quality for next boot; @param q must be 1–100. */
 esp_err_t jpeg_quality_save_to_nvs(uint8_t q);
+
+/** Load max-FPS cap from NVS if present (0–60); no-op if missing. Call after defaulting. */
+void stream_max_fps_load_from_nvs(void);
+/** Persist the max-FPS cap for next boot; @param fps must be 0–60 (0 = uncapped). */
+esp_err_t stream_max_fps_save_to_nvs(uint8_t fps);

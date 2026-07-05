@@ -13,6 +13,7 @@ jpeg_frame_slot_t g_jpeg_frame;
 
 static const char *const k_nvs_ns = "p4kvm";
 static const char *const k_nvs_key_jpeg_q = "jpeg_q";
+static const char *const k_nvs_key_max_fps = "max_fps";
 
 static portMUX_TYPE s_stream_mu = portMUX_INITIALIZER_UNLOCKED;
 static int s_stream_clients;
@@ -110,6 +111,43 @@ esp_err_t jpeg_quality_save_to_nvs(uint8_t q)
     }
     if (err != ESP_OK) {
         ESP_LOGW("p4kvm", "jpeg_q NVS write: %s", esp_err_to_name(err));
+    }
+    nvs_close(h);
+    return err;
+}
+
+void stream_max_fps_load_from_nvs(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(k_nvs_ns, NVS_READONLY, &h) != ESP_OK) {
+        return;
+    }
+    uint8_t f = 0xff;
+    esp_err_t err = nvs_get_u8(h, k_nvs_key_max_fps, &f);
+    nvs_close(h);
+    if (err != ESP_OK || f > 60u) {
+        return;
+    }
+    g_jpeg_frame.stream_max_fps = f;
+}
+
+esp_err_t stream_max_fps_save_to_nvs(uint8_t fps)
+{
+    if (fps > 60u) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(k_nvs_ns, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        ESP_LOGW("p4kvm", "nvs_open %s: %s", k_nvs_ns, esp_err_to_name(err));
+        return err;
+    }
+    err = nvs_set_u8(h, k_nvs_key_max_fps, fps);
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW("p4kvm", "max_fps NVS write: %s", esp_err_to_name(err));
     }
     nvs_close(h);
     return err;

@@ -52,6 +52,8 @@ import { FitAddon } from "@xterm/addon-fit";
   const btnAtxForce = $("btn-atx-force");
   const jpegQ = $("jpeg-q");
   const qVal = $("q-val");
+  const maxFps = $("max-fps");
+  const fpsVal = $("fps-val");
   const resVal = $("res-val");
   const btnRes720 = $("res-720");
   const btnRes1080 = $("res-1080");
@@ -481,6 +483,11 @@ import { FitAddon } from "@xterm/addon-fit";
           jpegQ.value = String(deviceStats.quality);
           qVal.textContent = "q" + deviceStats.quality;
         }
+        if (!fpsDragging && typeof deviceStats.max_fps === "number" &&
+            deviceStats.max_fps >= 1 && deviceStats.max_fps !== parseInt(maxFps.value, 10)) {
+          maxFps.value = String(deviceStats.max_fps);
+          fpsVal.textContent = fpsLabel(deviceStats.max_fps);
+        }
         /* Reveal + refresh the media button once, when the device first answers.
          * Afterwards it refreshes only on popover open / mount / eject. */
         if (btnMedia.hidden) refreshMediaStatus();
@@ -549,6 +556,37 @@ import { FitAddon } from "@xterm/addon-fit";
       if (!isNaN(n) && n >= 1 && n <= 100) {
         jpegQ.value = String(n);
         qVal.textContent = "q" + n;
+      }
+    } catch (e) { /* device may still be starting */ }
+  }
+
+  /* ---------------- max framerate ---------------- */
+
+  let fpsDragging = false;
+  let fpsDebounce = null;
+  function fpsLabel(v) { return v + " fps"; }
+  fpsVal.textContent = fpsLabel(maxFps.value);
+  maxFps.addEventListener("pointerdown", () => { fpsDragging = true; });
+  maxFps.addEventListener("pointerup", () => { fpsDragging = false; });
+  maxFps.addEventListener("input", function () {
+    fpsVal.textContent = fpsLabel(maxFps.value);
+    if (fpsDebounce) clearTimeout(fpsDebounce);
+    fpsDebounce = setTimeout(async function () {
+      fpsDebounce = null;
+      try {
+        await fetch("/stream-fps?fps=" + encodeURIComponent(maxFps.value), { cache: "no-store" });
+      } catch (e) { /* retried implicitly by next adjustment */ }
+    }, 300);
+  });
+
+  async function syncMaxFpsFromDevice() {
+    try {
+      const r = await fetch("/stream-fps", { cache: "no-store" });
+      if (!r.ok) return;
+      const n = parseInt((await r.text()).trim(), 10);
+      if (!isNaN(n) && n >= 1 && n <= 60) {
+        maxFps.value = String(n);
+        fpsVal.textContent = fpsLabel(n);
       }
     } catch (e) { /* device may still be starting */ }
   }
@@ -1521,6 +1559,7 @@ import { FitAddon } from "@xterm/addon-fit";
   let qualitySyncTimer = setTimeout(function () {
     qualitySyncTimer = null;
     syncJpegQualityFromDevice();
+    syncMaxFpsFromDevice();
   }, 250);
 
   let initialWsTimer = setTimeout(function () {
