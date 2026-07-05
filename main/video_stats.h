@@ -23,6 +23,7 @@ typedef struct {
     uint32_t enc_errors;    /**< jpeg_encoder_process failures since boot. */
     uint32_t cap_fps_x10;   /**< CSI frame rate over the last window, x10. */
     uint32_t enc_fps_x10;   /**< Encoded frame rate over the last window, x10. */
+    uint32_t tx_fps_x10;    /**< Transmitted (changed) frame rate last window, x10; <= enc when dedup drops static frames. */
     uint32_t bs_us;         /**< Mean BitScrambler reorder time last window (0 on RGB888). */
     uint32_t enc_us;        /**< Mean hardware JPEG encode time last window. */
     uint32_t jpeg_bytes;    /**< Mean published JPEG size last window. */

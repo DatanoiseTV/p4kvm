@@ -344,11 +344,12 @@ static esp_err_t stats_get(httpd_req_t *req)
     char body[768];
     uint32_t cap_x10 = g_video_stats.cap_fps_x10;
     uint32_t enc_x10 = g_video_stats.enc_fps_x10;
+    uint32_t tx_x10 = g_video_stats.tx_fps_x10;
     int n = snprintf(body, sizeof(body),
                      "{\"version\":\"" P4KVM_VERSION "\",\"pipeline\":\"%s\","
                      "\"hostname\":\"" CONFIG_P4KVM_MDNS_HOSTNAME "\","
                      "\"mode\":\"%s\",\"width\":%lu,\"height\":%lu,"
-                     "\"cap_fps\":%u.%u,\"enc_fps\":%u.%u,"
+                     "\"cap_fps\":%u.%u,\"enc_fps\":%u.%u,\"tx_fps\":%u.%u,"
                      "\"bs_us\":%u,\"enc_us\":%u,\"jpeg_bytes\":%u,\"quality\":%u,\"max_fps\":%u,"
                      "\"clients\":%d,\"hdmi_locked\":%s,\"sys_status\":%u,"
                      "\"cap_frames\":%u,\"enc_frames\":%u,\"enc_errors\":%u,\"recoveries\":%u,"
@@ -357,7 +358,8 @@ static esp_err_t stats_get(httpd_req_t *req)
                      "\"uptime_s\":%lld,\"heap_free\":%u,\"psram_free\":%u}",
                      video_stats_pipeline_name(), video_mode_name(), (unsigned long)video_mode_hres(),
                      (unsigned long)video_mode_vres(), (unsigned)(cap_x10 / 10u), (unsigned)(cap_x10 % 10u),
-                     (unsigned)(enc_x10 / 10u), (unsigned)(enc_x10 % 10u), (unsigned)g_video_stats.bs_us,
+                     (unsigned)(enc_x10 / 10u), (unsigned)(enc_x10 % 10u), (unsigned)(tx_x10 / 10u),
+                     (unsigned)(tx_x10 % 10u), (unsigned)g_video_stats.bs_us,
                      (unsigned)g_video_stats.enc_us, (unsigned)g_video_stats.jpeg_bytes,
                      (unsigned)g_jpeg_frame.jpeg_quality, (unsigned)g_jpeg_frame.stream_max_fps,
                      jpeg_frame_stream_clients(),
@@ -770,8 +772,11 @@ static void stream_worker_task(void *arg)
 
     sock_set_nodelay(req);
     jpeg_frame_stream_enter();
-    /* Wait for the next camera frame after connect, avoids replaying one stale JPEG in a tight loop. */
-    uint32_t last_seq = g_jpeg_frame.frame_seq;
+    /* Send the current frame immediately on connect: with change detection the
+     * publisher goes silent on a static screen, so a new viewer must get the
+     * latest published frame now instead of a blank canvas until something moves.
+     * (last_seq = seq-1 makes the first loop iteration send the current front.) */
+    uint32_t last_seq = g_jpeg_frame.frame_seq - 1u;
 
     /* Rate control (per viewer): last_send_us gates against the max-FPS cap;
      * eff_extra_us is the adaptive back-off added on top when this link is

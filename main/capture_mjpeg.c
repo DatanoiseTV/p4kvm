@@ -14,6 +14,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_private/esp_cache_private.h"
+#include "esp_rom_crc.h"
 #include "esp_timer.h"
 #include "driver/jpeg_encode.h"
 #include "freertos/semphr.h"
@@ -64,6 +65,7 @@ typedef struct {
     int64_t window_start_us;
     uint32_t cap_frames_at_start;
     uint32_t enc_frames;
+    uint32_t tx_frames; /**< frames actually published (changed) this window */
     uint64_t enc_us_sum;
     uint64_t bs_us_sum;
     uint64_t jpeg_bytes_sum;
@@ -74,6 +76,7 @@ static void stats_window_reset(stats_window_t *w, uint32_t cap_frames_now, int64
     w->window_start_us = now_us;
     w->cap_frames_at_start = cap_frames_now;
     w->enc_frames = 0;
+    w->tx_frames = 0;
     w->enc_us_sum = 0;
     w->bs_us_sum = 0;
     w->jpeg_bytes_sum = 0;
@@ -90,6 +93,7 @@ static void stats_window_publish(stats_window_t *w, capture_ctx_t *c, int64_t no
     g_video_stats.cap_frames = cap_now;
     g_video_stats.cap_fps_x10 = (uint32_t)((uint64_t)cap_delta * 10000000ull / (uint64_t)span);
     g_video_stats.enc_fps_x10 = (uint32_t)((uint64_t)w->enc_frames * 10000000ull / (uint64_t)span);
+    g_video_stats.tx_fps_x10 = (uint32_t)((uint64_t)w->tx_frames * 10000000ull / (uint64_t)span);
     if (w->enc_frames > 0) {
         g_video_stats.enc_us = (uint32_t)(w->enc_us_sum / w->enc_frames);
         g_video_stats.bs_us = (uint32_t)(w->bs_us_sum / w->enc_frames);
@@ -254,6 +258,11 @@ void capture_mjpeg_run(capture_ctx_t *c)
     stats_window_t win;
     stats_window_reset(&win, c->csi_dma_done_irqs, (int64_t)esp_timer_get_time());
 
+    /* Last transmitted frame fingerprint for change detection (see the commit
+     * site). 0/0 means "nothing sent yet", so the first frame always publishes. */
+    size_t last_tx_len = 0;
+    uint32_t last_tx_crc = 0;
+
     while (1) {
         if (xSemaphoreTake(c->csi_done_sem, pdMS_TO_TICKS(2000)) != pdTRUE) {
             handle_csi_timeout(c, bpp, &hdmi_recover_cooldown_until_us, &hdmi_recover_fail_streak);
@@ -331,19 +340,33 @@ void capture_mjpeg_run(capture_ctx_t *c)
             ESP_LOGW(CAPTURE_LOG_TAG, "jpeg %s", esp_err_to_name(er));
             continue;
         }
-        if (xSemaphoreTake(g_jpeg_frame.mutex, portMAX_DELAY) == pdTRUE) {
-            g_jpeg_frame.jpeg_len[back] = (size_t)out_sz;
-            g_jpeg_frame.front_idx = back;
-            g_jpeg_frame.frame_seq++;
-            xSemaphoreGive(g_jpeg_frame.mutex);
-        }
-        jpeg_frame_notify_new_frame();
+
+        /* Change detection: HDMI is digital, so a static screen encodes to
+         * byte-identical JPEGs. Skip publishing a frame identical to the last one
+         * transmitted (length + CRC32) - an idle desktop then sends nothing, and
+         * a changing region streams up to the per-viewer cap. front_idx stays on
+         * the last distinct frame so a new viewer still gets the current screen. */
+        uint32_t crc = esp_rom_crc32_le(0, g_jpeg_frame.jpeg_buf[back], (uint32_t)out_sz);
+        bool changed = !((size_t)out_sz == last_tx_len && crc == last_tx_crc);
 
         g_video_stats.enc_frames++;
         win.enc_frames++;
         win.bs_us_sum += (uint64_t)(t1 - t0);
         win.enc_us_sum += (uint64_t)(t2 - t1);
         win.jpeg_bytes_sum += out_sz;
+
+        if (changed) {
+            last_tx_len = (size_t)out_sz;
+            last_tx_crc = crc;
+            if (xSemaphoreTake(g_jpeg_frame.mutex, portMAX_DELAY) == pdTRUE) {
+                g_jpeg_frame.jpeg_len[back] = (size_t)out_sz;
+                g_jpeg_frame.front_idx = back;
+                g_jpeg_frame.frame_seq++;
+                xSemaphoreGive(g_jpeg_frame.mutex);
+            }
+            jpeg_frame_notify_new_frame();
+            win.tx_frames++;
+        }
         stats_window_publish(&win, c, t2);
     }
 }

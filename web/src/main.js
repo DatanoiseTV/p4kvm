@@ -331,6 +331,7 @@ import { FitAddon } from "@xterm/addon-fit";
     ["pipeline", "PIPELINE"],
     ["capfps", "CAPTURE"],
     ["encfps", "ENCODE"],
+    ["txfps", "STREAM RATE"],
     ["jpeg", "JPEG SIZE"],
     ["net", "LINK RATE"],
     ["quality", "QUALITY"],
@@ -444,6 +445,10 @@ import { FitAddon } from "@xterm/addon-fit";
     let enc = d.enc_fps + " fps · " + (d.enc_us / 1000).toFixed(1) + " ms";
     if (d.bs_us > 0) enc += " · reorder " + (d.bs_us / 1000).toFixed(1) + " ms";
     dset("encfps", enc, d.enc_fps > 0 ? "ok" : "warn");
+    if (typeof d.tx_fps === "number") {
+      const capTxt = d.max_fps ? " (cap " + d.max_fps + ")" : "";
+      dset("txfps", d.tx_fps + " fps" + capTxt, "ok");
+    }
     dset("jpeg", d.jpeg_bytes ? fmtKb(d.jpeg_bytes) + " / frame" : "--");
     dset("quality", "q" + d.quality);
     const wg = d.wg || "off";
