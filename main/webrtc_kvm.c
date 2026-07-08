@@ -43,12 +43,11 @@ static const char *TAG = "p4kvm_rtc";
 
 #define RTC_HID_LABEL "hid"
 
-/* Answer/candidate gathering window for a single HTTP round-trip. The browser
- * waits on the POST response, so we collect the answer SDP and whatever host
- * candidates ICE produces within this budget, then reply. On a LAN the reflexive
- * gathering is fast; there is no STUN by default. */
+/* Max time to wait for esp_peer to produce the answer SDP for a single HTTP
+ * round-trip; the browser blocks on the POST response until then. Both the host
+ * and srflx candidates are already inside that SDP, so no separate settle wait
+ * is needed. */
 #define RTC_SDP_WAIT_MS 3000
-#define RTC_CAND_SETTLE_MS 1800
 #define RTC_MAX_CANDIDATES 24
 #define RTC_MAX_SDP 4096
 #define RTC_MAX_CAND_LEN 300
@@ -441,18 +440,12 @@ esp_err_t webrtc_kvm_handle_offer(const char *offer, size_t offer_len, char *res
             result = ESP_ERR_TIMEOUT;
             break;
         }
-        /* esp_peer embeds its srflx candidate in the answer SDP rather than
-         * trickling it via on_msg, so give any (rare) trickle candidates a short
-         * window, then synthesize the LAN host candidate the browser needs. */
-        int64_t t1 = esp_timer_get_time();
-        int last = -1;
-        while ((esp_timer_get_time() - t1) < (int64_t)RTC_CAND_SETTLE_MS * 1000) {
-            vTaskDelay(pdMS_TO_TICKS(30));
-            if (s_cand_count == last && s_cand_count > 0) {
-                break; /* trickle settled */
-            }
-            last = s_cand_count;
-        }
+        /* esp_peer embeds both its host and srflx candidates inside the answer
+         * SDP by the time it signals the SDP is ready - it does not trickle them
+         * via on_msg - so there is nothing to wait for. Synthesize the LAN host
+         * candidate immediately and reply. Blocking here only ties up the HTTP
+         * worker and its socket longer, which on a small lwIP pool contributes to
+         * accept()-ENFILE under repeated negotiations. */
         rtc_inject_lan_host_candidates();
 
         result = build_answer_json(resp, resp_cap, resp_len);

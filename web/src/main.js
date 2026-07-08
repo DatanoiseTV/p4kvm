@@ -410,16 +410,31 @@ import { FitAddon } from "@xterm/addon-fit";
   }
 
   let webrtcAttempts = 0;
-  const WEBRTC_MAX_ATTEMPTS = 4;
+  /* One attempt per page. Each negotiation opens ICE/DTLS sockets on the device,
+   * whose lwIP pool is small; on a network where WebRTC can't pair, retrying
+   * hammered that pool until accept() failed with ENFILE and wedged the HTTP
+   * server. So: try once, and if it fails record it for the browser session so
+   * reloads don't restart the storm. The user stays on MJPEG, which is reliable.
+   * ?webrtcforce=1 clears the sticky flag to retry after a network/TURN change. */
+  const WEBRTC_MAX_ATTEMPTS = 1;
+  const WEBRTC_OFF_KEY = "p4kvm-webrtc-off";
+  const webrtcForced = /[?&]webrtcforce=1/.test(location.search);
+  function webrtcGaveUp() {
+    try { return !webrtcForced && sessionStorage.getItem(WEBRTC_OFF_KEY) === "1"; } catch (e) { return false; }
+  }
+  function markWebrtcGaveUp() {
+    try { sessionStorage.setItem(WEBRTC_OFF_KEY, "1"); } catch (e) {}
+  }
 
   function teardownWebrtc(retry) {
     if (hidChannel) { try { hidChannel.close(); } catch (e) {} hidChannel = null; }
     if (pc) { try { pc.close(); } catch (e) {} pc = null; }
     if (webrtcActive) showWebrtcVideo(false);
-    /* Back off and give up after a few tries so a network where WebRTC can't
-     * establish just settles on MJPEG instead of renegotiating forever. */
-    if (retry && !webrtcDisabled && webrtcAttempts < WEBRTC_MAX_ATTEMPTS) {
-      setTimeout(startWebrtc, 8000);
+    /* Give up for this session rather than renegotiating - a failed pairing means
+     * the network can't carry it (no TURN, mDNS-hidden host candidates, etc.),
+     * and retrying only churns device sockets. MJPEG stays as the transport. */
+    if (retry && webrtcAttempts >= WEBRTC_MAX_ATTEMPTS) {
+      markWebrtcGaveUp();
     }
   }
 
@@ -440,7 +455,7 @@ import { FitAddon } from "@xterm/addon-fit";
   }
 
   async function startWebrtc() {
-    if (webrtcDisabled || pc) return;
+    if (webrtcDisabled || pc || webrtcGaveUp()) return;
     webrtcAttempts++;
     try {
       /* A STUN server is configured so the device-side agent gathers candidates
