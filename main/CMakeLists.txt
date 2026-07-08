@@ -48,6 +48,12 @@ idf_component_register(
         mbedtls
         espressif__cjson
         espressif__esp_tinyusb
+        # esp_wireguard stays in REQUIRES unconditionally so main always sees
+        # its header; the component itself compiles to nothing when
+        # P4KVM_WG_ENABLE is off (see components/esp_wireguard/CMakeLists.txt),
+        # which is the reliable way to make it build-time optional - REQUIRES
+        # are resolved before sdkconfig in the early-expansion phase, so gating
+        # them on CONFIG_ does not work.
         esp_wireguard
 )
 
