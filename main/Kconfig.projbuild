@@ -35,6 +35,35 @@ menu "P4KVM HDMI → CSI"
 
     endchoice
 
+    config P4KVM_WEBRTC_ENABLE
+        bool "WebRTC video (hardware H.264) + data-channel HID/serial"
+        default n
+        depends on P4KVM_PIPELINE_YUV422
+        help
+            Adds a WebRTC path alongside MJPEG: the P4 hardware H.264 encoder
+            streams the captured UYVY frames as a low-latency video track
+            (~5-10x smaller than MJPEG at equal quality), and keyboard/mouse
+            plus the serial console ride SCTP data channels on the same peer
+            connection. Signaling is automatic over the device's own HTTP
+            server (POST /webrtc/offer) - no external server - and the browser
+            falls back to MJPEG-over-WebSocket if the peer connection cannot be
+            established. Requires the YUV422 pipeline (the H.264 encoder
+            consumes UYVY directly). Both encoders are demand-gated, so H.264
+            only runs while a WebRTC viewer is connected.
+
+            EXPERIMENTAL: builds clean but is not yet hardware-verified; keep
+            it off for production images until confirmed on a board.
+
+    config P4KVM_WEBRTC_BITRATE_KBPS
+        int "WebRTC H.264 target bitrate (kbps)"
+        depends on P4KVM_WEBRTC_ENABLE
+        range 200 20000
+        default 4000
+        help
+            Target bitrate for the hardware H.264 rate control. 4 Mbps is a
+            good 720p default; WebRTC congestion control is not yet wired to
+            adjust this at runtime, so pick for the worst link you expect.
+
     config P4KVM_TEST_PATTERN
         bool "Animated test pattern instead of HDMI capture"
         default n

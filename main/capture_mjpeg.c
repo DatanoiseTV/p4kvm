@@ -20,6 +20,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
+#include "capture_h264.h"
 #include "jpeg_frame.h"
 #include "tc358743_hdmi_debug.h"
 #include "video_stats.h"
@@ -367,6 +368,13 @@ void capture_mjpeg_run(capture_ctx_t *c)
             jpeg_frame_notify_new_frame();
             win.tx_frames++;
         }
+
+        /* Feed the same UYVY frame to the hardware H.264 encoder for WebRTC.
+         * No-op unless a WebRTC viewer is connected (no sink registered), and
+         * the H.264 block is separate silicon from the JPEG encoder, so this
+         * does not slow the MJPEG path. */
+        capture_h264_on_csi_frame((const uint8_t *)src, c);
+
         stats_window_publish(&win, c, t2);
     }
 }

@@ -68,6 +68,19 @@ CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_HEX=y
 CONFIG_SPIRAM_SPEED_200M=y
 
+# WebRTC path: hardware H.264 video track + SCTP data-channel HID/serial,
+# alongside MJPEG (browser auto-falls-back to MJPEG-over-WS if the peer
+# connection fails). Needs the YUV422 pipeline (the H.264 encoder consumes UYVY
+# directly). esp_peer's DTLS-SRTP needs these mbedtls options; MBEDTLS_X509_
+# CREATE_C is additionally required on IDF 6.0 (mbedtls 4) for the self-signed
+# DTLS cert. EXPERIMENTAL - not yet hardware-verified; the MJPEG fallback keeps
+# the KVM usable regardless.
+CONFIG_P4KVM_PIPELINE_YUV422=y
+CONFIG_P4KVM_WEBRTC_ENABLE=y
+CONFIG_MBEDTLS_SSL_PROTO_DTLS=y
+CONFIG_MBEDTLS_SSL_DTLS_SRTP=y
+CONFIG_MBEDTLS_X509_CREATE_C=y
+
 # MJPEG pushes large JPEG segments; lwIP defaults (~5.8 KiB) cause backpressure/resets on Ethernet.
 CONFIG_LWIP_TCP_SND_BUF_DEFAULT=65535
 CONFIG_LWIP_TCP_WND_DEFAULT=65535

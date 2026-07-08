@@ -13,3 +13,11 @@ dependencies:
   # cJSON left IDF core in v6; used by the /config settings endpoint.
   espressif/cjson:
     version: "*"
+  # Hardware H.264 baseline encoder (P4 has a dedicated H264 block) for the
+  # WebRTC video track - ~5-10x smaller than MJPEG at equal quality.
+  espressif/esp_h264:
+    version: "^1.3.0"
+  # WebRTC peer connection (ICE + DTLS-SRTP + SCTP data channel) for the
+  # low-latency video track and the HID/serial data channels.
+  espressif/esp_peer:
+    version: "^1.5.0"
