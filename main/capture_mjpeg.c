@@ -332,6 +332,23 @@ void capture_mjpeg_run(capture_ctx_t *c)
 #endif
         int64_t t1 = (int64_t)esp_timer_get_time();
 
+#if !CAPTURE_NEEDS_REORDER
+        /*
+         * Drop any CPU cache lines shadowing the freshly DMA-written source
+         * before jpeg_encoder_process() runs its internal C2M write-back on the
+         * same buffer (esp_driver_jpeg/jpeg_encode.c ~L250). If a stale line
+         * survives - which the "invalidate once at alloc, never touch again"
+         * invariant (see capture_priv.h) does NOT guarantee across every board
+         * and IDF version - that write-back flushes stale bytes over the live
+         * capture and the encoder re-reads a frozen frame. Symptom: cap fps
+         * high but every JPEG byte-identical, so change detection drops them
+         * all (tx fps ~0). done_fb is fb-aligned and frame_bytes is a cache-line
+         * multiple, so the invalidate is aligned/safe. On the reorder path the
+         * BitScrambler driver already syncs enc_src, so this is skipped there.
+         */
+        esp_cache_msync(src, c->frame_bytes, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+#endif
+
         esp_err_t er = jpeg_encoder_process(s_jpeg_enc, &enc, enc_src, jpeg_in_bytes, g_jpeg_frame.jpeg_buf[back],
                                             (uint32_t)g_jpeg_frame.jpeg_cap, &out_sz);
         int64_t t2 = (int64_t)esp_timer_get_time();

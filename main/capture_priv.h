@@ -67,12 +67,14 @@
  * capture_testpat.c).
  *
  * Cache-coherency invariant: in HDMI capture mode the fb ring is touched by
- * DMA only (CSI writes, BitScrambler/JPEG read); it is flushed+invalidated
- * once after allocation and never CPU-accessed again. Any future CPU read or
- * write of fb[] pixel data must bring back per-frame esp_cache_msync, or the
- * JPEG driver's internal C2M write-back will flush stale lines over live DMA
- * data. The test-pattern source CPU-writes the ring and therefore does its
- * own per-frame write-back before publishing.
+ * DMA only (CSI writes, BitScrambler/JPEG read). It is flushed+invalidated
+ * once after allocation, and the encode loop additionally invalidates the
+ * source (DIR_M2C) before every jpeg_encoder_process(): that call's internal
+ * C2M write-back on its input would otherwise flush a stale CPU cache line
+ * over the live DMA capture on platforms/IDF versions that do not keep the
+ * ring's lines invalidated for the buffer's lifetime (observed as a frozen
+ * frame: high cap fps, zero tx fps). The test-pattern source CPU-writes the
+ * ring and does its own per-frame write-back before publishing.
  */
 typedef struct {
     uint32_t hres;
