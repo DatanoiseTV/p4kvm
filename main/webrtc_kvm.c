@@ -45,8 +45,8 @@ static const char *TAG = "p4kvm_rtc";
  * waits on the POST response, so we collect the answer SDP and whatever host
  * candidates ICE produces within this budget, then reply. On a LAN the reflexive
  * gathering is fast; there is no STUN by default. */
-#define RTC_SDP_WAIT_MS 2500
-#define RTC_CAND_SETTLE_MS 700
+#define RTC_SDP_WAIT_MS 3000
+#define RTC_CAND_SETTLE_MS 1800
 #define RTC_MAX_CANDIDATES 24
 #define RTC_MAX_SDP 4096
 #define RTC_MAX_CAND_LEN 300
@@ -278,13 +278,33 @@ esp_err_t webrtc_kvm_handle_offer(const char *offer, size_t offer_len, char *res
         uint32_t w = video_mode_hres();
         uint32_t h = video_mode_vres();
 
+        /* An ICE server is required: without one esp_peer's agent starts but
+         * never gathers/binds a working candidate, so ICE never pairs and the
+         * connection dies after a few seconds. A public STUN server also lets it
+         * discover a server-reflexive candidate for off-LAN (tunnel) viewers.
+         * static so it outlives this stack frame for the peer's lifetime. */
+        static esp_peer_ice_server_cfg_t s_ice_servers[] = {
+            {.stun_url = (char *)"stun:stun.l.google.com:19302"},
+        };
+        /* Browsers emit ~12 host candidates (one per interface, mDNS-obfuscated);
+         * the default cap of 10 drops some ("Remote candidate over limited 10").
+         * Raise it so the real reachable one is not the one dropped. */
+        static esp_peer_default_cfg_t s_def_cfg = {
+            .agent_recv_timeout = 500,
+            .max_candidates = 24,
+        };
+
         esp_peer_cfg_t cfg = {
             .role = ESP_PEER_ROLE_CONTROLLED,
             .ice_trans_policy = ESP_PEER_ICE_TRANS_POLICY_ALL,
+            .server_lists = s_ice_servers,
+            .server_num = sizeof(s_ice_servers) / sizeof(s_ice_servers[0]),
             .video_info = {.codec = ESP_PEER_VIDEO_CODEC_H264, .width = (int)w, .height = (int)h, .fps = 30},
             .audio_dir = ESP_PEER_MEDIA_DIR_NONE,
             .video_dir = ESP_PEER_MEDIA_DIR_SEND_ONLY,
             .enable_data_channel = true,
+            .extra_cfg = &s_def_cfg,
+            .extra_size = sizeof(s_def_cfg),
             .on_state = on_state,
             .on_msg = on_msg,
             .on_video_info = on_noop_video_info,

@@ -374,11 +374,18 @@ import { FitAddon } from "@xterm/addon-fit";
     setTransportDiag();
   }
 
+  let webrtcAttempts = 0;
+  const WEBRTC_MAX_ATTEMPTS = 4;
+
   function teardownWebrtc(retry) {
     if (hidChannel) { try { hidChannel.close(); } catch (e) {} hidChannel = null; }
     if (pc) { try { pc.close(); } catch (e) {} pc = null; }
     if (webrtcActive) showWebrtcVideo(false);
-    if (retry && !webrtcDisabled) setTimeout(startWebrtc, 5000);
+    /* Back off and give up after a few tries so a network where WebRTC can't
+     * establish just settles on MJPEG instead of renegotiating forever. */
+    if (retry && !webrtcDisabled && webrtcAttempts < WEBRTC_MAX_ATTEMPTS) {
+      setTimeout(startWebrtc, 8000);
+    }
   }
 
   function iceGatheringComplete(peer, timeoutMs) {
@@ -399,8 +406,11 @@ import { FitAddon } from "@xterm/addon-fit";
 
   async function startWebrtc() {
     if (webrtcDisabled || pc) return;
+    webrtcAttempts++;
     try {
-      pc = new RTCPeerConnection({ iceServers: [] }); /* LAN/tunnel: host candidates suffice */
+      /* A STUN server is configured so the device-side agent gathers candidates
+       * (esp_peer needs one); on the same LAN the host candidate carries it. */
+      pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
       hidChannel = pc.createDataChannel("hid", { ordered: true });
       pc.addTransceiver("video", { direction: "recvonly" });
       pc.ontrack = function (ev) {
@@ -413,7 +423,7 @@ import { FitAddon } from "@xterm/addon-fit";
         if (s === "failed" || s === "disconnected" || s === "closed") teardownWebrtc(true);
       };
       await pc.setLocalDescription(await pc.createOffer());
-      await iceGatheringComplete(pc, 1500);
+      await iceGatheringComplete(pc, 2500);
       const resp = await fetch("/webrtc/offer", {
         method: "POST",
         headers: { "Content-Type": "application/sdp" },
@@ -427,8 +437,8 @@ import { FitAddon } from "@xterm/addon-fit";
           try { await pc.addIceCandidate({ candidate: c, sdpMLineIndex: 0 }); } catch (e) {}
         }
       }
-      /* Give the media path a few seconds to come up; otherwise fall back. */
-      setTimeout(function () { if (pc && !webrtcActive) teardownWebrtc(true); }, 8000);
+      /* Give ICE/DTLS time to come up (STUN round-trip + pairing); otherwise fall back. */
+      setTimeout(function () { if (pc && !webrtcActive) teardownWebrtc(true); }, 15000);
     } catch (e) {
       teardownWebrtc(true);
     }
