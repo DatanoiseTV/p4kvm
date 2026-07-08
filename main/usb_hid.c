@@ -289,7 +289,15 @@ static void process_mouse_msg(const usb_hid_q_msg_t *m);
 
 static void merge_mouse_msgs(usb_hid_q_msg_t *acc, const usb_hid_q_msg_t *add)
 {
-    if (acc->u.mouse.relative != add->u.mouse.relative) {
+    if (acc->u.mouse.relative != add->u.mouse.relative ||
+        acc->u.mouse.buttons != add->u.mouse.buttons) {
+        /* A mode switch OR a button transition must survive as its own report.
+         * Coalescing a press+release (a point-and-click, which sends btn=1 then
+         * btn=0 with no motion between) into one frame drops the click entirely:
+         * the host only ever sees the final buttons=0. Tablet mode hits this
+         * every click; relative mode hid it because aiming moves the mouse and
+         * spaces the reports apart. Flush the accumulator so each transition is
+         * delivered. */
         process_mouse_msg(acc);
         *acc = *add;
         return;
