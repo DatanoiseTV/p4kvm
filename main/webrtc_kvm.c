@@ -24,9 +24,11 @@ static const char *TAG = "p4kvm_rtc";
 
 #if CONFIG_P4KVM_WEBRTC_ENABLE
 
+#include <stdio.h>
 #include <string.h>
 
 #include "cJSON.h"
+#include "esp_netif.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -222,6 +224,91 @@ static void rtc_teardown(void)
     s_state = RTC_IDLE;
 }
 
+/* Append a candidate string to the collection returned to the browser. */
+static void sig_add_candidate(const char *cand)
+{
+    xSemaphoreTake(s_sig_lock, portMAX_DELAY);
+    if (s_cand_count < RTC_MAX_CANDIDATES) {
+        size_t n = strnlen(cand, RTC_MAX_CAND_LEN - 1);
+        memcpy(s_cand[s_cand_count], cand, n);
+        s_cand[s_cand_count][n] = '\0';
+        s_cand_count++;
+    }
+    xSemaphoreGive(s_sig_lock);
+}
+
+/* esp_peer embeds its single server-reflexive (public) candidate inside the
+ * answer SDP and never enumerates a host candidate for the device's LAN address.
+ * When the browser sits on the same LAN behind the same NAT, the only reachable
+ * path to that public candidate is router hairpinning, which most home routers
+ * refuse - so ICE loops on unanswered binding requests and dies.
+ *
+ * The browser reached this device directly to fetch the page, so the device's
+ * own LAN IP is a routable path. Synthesize a host candidate at each up
+ * interface IP (WiFi / Ethernet) and hand it to the browser alongside the
+ * answer, so it probes the device directly instead of via hairpin.
+ *
+ * Port: esp_peer binds one UDP socket, so all its candidates share a local port.
+ * The srflx line's rport (if present) is that exact local port; otherwise fall
+ * back to the srflx mapped port, which a port-preserving NAT leaves unchanged. */
+static void rtc_inject_lan_host_candidates(void)
+{
+    /* Find the srflx (or any) candidate line in the answer SDP and pull the
+     * local UDP port from it. */
+    int port = 0;
+    const char *p = s_answer_sdp;
+    while ((p = strstr(p, "candidate:")) != NULL) {
+        char foundation[64], transport[8], addr[64], type[16];
+        int comp = 0, cport = 0;
+        unsigned prio = 0;
+        if (sscanf(p, "candidate:%63s %d %7s %u %63s %d typ %15s",
+                   foundation, &comp, transport, &prio, addr, &cport, type) == 7) {
+            ESP_LOGI(TAG, "answer cand: %s %s:%d typ %s", transport, addr, cport, type);
+            /* rport is the true local port; prefer it when the stack emits it. */
+            const char *rp = strstr(p, "rport ");
+            int rport = 0;
+            if (rp && sscanf(rp, "rport %d", &rport) == 1 && rport > 0) {
+                port = rport;
+            } else if (port == 0 && cport > 0) {
+                port = cport;
+            }
+        }
+        p += strlen("candidate:");
+    }
+    if (port <= 0) {
+        ESP_LOGW(TAG, "no port found in answer SDP; cannot add LAN host candidate");
+        return;
+    }
+
+    /* Add a host candidate for every up IPv4 interface the browser might share a
+     * subnet with. The WireGuard tunnel IP is intentionally skipped - a LAN
+     * browser cannot reach it, and an off-LAN tunnel viewer uses the srflx path. */
+    static const char *const ifkeys[] = {"WIFI_STA_DEF", "ETH_DEF"};
+    int added = 0;
+    for (size_t i = 0; i < sizeof(ifkeys) / sizeof(ifkeys[0]); i++) {
+        esp_netif_t *nif = esp_netif_get_handle_from_ifkey(ifkeys[i]);
+        if (!nif) {
+            continue;
+        }
+        esp_netif_ip_info_t ip;
+        if (esp_netif_get_ip_info(nif, &ip) != ESP_OK || ip.ip.addr == 0) {
+            continue;
+        }
+        char ipstr[16];
+        snprintf(ipstr, sizeof(ipstr), IPSTR, IP2STR(&ip.ip));
+        char cand[RTC_MAX_CAND_LEN];
+        /* High host-typ priority so ICE tries this pair early. */
+        snprintf(cand, sizeof(cand), "candidate:lanhost%d 1 udp %u %s %d typ host generation 0",
+                 added, 2130706431u - (unsigned)added, ipstr, port);
+        sig_add_candidate(cand);
+        ESP_LOGI(TAG, "injected LAN host candidate: %s:%d", ipstr, port);
+        added++;
+    }
+    if (added == 0) {
+        ESP_LOGW(TAG, "no up LAN interface for a host candidate");
+    }
+}
+
 static esp_err_t build_answer_json(char *resp, size_t resp_cap, size_t *resp_len)
 {
     cJSON *root = cJSON_CreateObject();
@@ -354,18 +441,19 @@ esp_err_t webrtc_kvm_handle_offer(const char *offer, size_t offer_len, char *res
             result = ESP_ERR_TIMEOUT;
             break;
         }
+        /* esp_peer embeds its srflx candidate in the answer SDP rather than
+         * trickling it via on_msg, so give any (rare) trickle candidates a short
+         * window, then synthesize the LAN host candidate the browser needs. */
         int64_t t1 = esp_timer_get_time();
         int last = -1;
         while ((esp_timer_get_time() - t1) < (int64_t)RTC_CAND_SETTLE_MS * 1000) {
             vTaskDelay(pdMS_TO_TICKS(30));
-            if (s_cand_count == last) {
-                /* No new candidate for a tick after we have at least one: done. */
-                if (s_cand_count > 0) {
-                    break;
-                }
+            if (s_cand_count == last && s_cand_count > 0) {
+                break; /* trickle settled */
             }
             last = s_cand_count;
         }
+        rtc_inject_lan_host_candidates();
 
         result = build_answer_json(resp, resp_cap, resp_len);
         if (result != ESP_OK) {
