@@ -335,6 +335,41 @@ import { FitAddon } from "@xterm/addon-fit";
   let hidChannel = null;
   let webrtcActive = false;
   const webrtcDisabled = /[?&]nowebrtc=1/.test(location.search) || typeof RTCPeerConnection === "undefined";
+  const WEBRTC_LOG = /[?&]webrtclog=1/.test(location.search);
+
+  /* IPv4/IPv6 literal test — only literals are valid in a host ICE candidate. */
+  function isIpLiteral(h) {
+    return /^\d{1,3}(\.\d{1,3}){3}$/.test(h) || (h.indexOf(":") >= 0 && /^[0-9a-fA-F:]+$/.test(h));
+  }
+
+  /* Same-LAN rescue. This esp_peer build does not enumerate local interfaces, so
+   * it never advertises a host candidate for the device's LAN IP — it only offers
+   * a STUN-reflexive (public) candidate. When browser and device sit behind the
+   * same NAT, reaching that public address needs router hairpinning, which most
+   * home routers refuse, so ICE stalls. But the browser reached the device
+   * directly to load this page, so location.hostname IS a routable path to it.
+   * Synthesize a host candidate at that IP for every UDP port the device
+   * advertised (a port-preserving NAT maps the local port unchanged, the common
+   * case) so the browser probes the device directly instead of via hairpin.
+   * Harmless if wrong — ICE just discards a candidate that never answers. */
+  function synthLanCandidates(deviceCands) {
+    const host = location.hostname;
+    if (!isIpLiteral(host)) return []; /* accessed by name: can't form a host candidate */
+    const ports = new Set();
+    for (const c of deviceCands) {
+      const m = /(?:udp|UDP)\s+\d+\s+([0-9a-fA-F.:]+)\s+(\d+)\s+typ\s+(host|srflx)/.exec(c);
+      if (m) ports.add(m[2]);
+    }
+    const out = [];
+    let i = 0;
+    for (const p of ports) {
+      /* Foundation/priority are cosmetic here; a high host-typ priority makes ICE
+       * try this pair early. sdpMLineIndex is set by the caller. */
+      out.push("candidate:lan" + i + " 1 udp " + (2130706431 - i) + " " + host + " " + p + " typ host generation 0");
+      i++;
+    }
+    return out;
+  }
 
   function hidChannelOpen() {
     return !!hidChannel && hidChannel.readyState === "open";
@@ -420,8 +455,17 @@ import { FitAddon } from "@xterm/addon-fit";
       };
       pc.onconnectionstatechange = function () {
         const s = pc && pc.connectionState;
+        if (WEBRTC_LOG) console.log("[webrtc] connectionState:", s);
         if (s === "failed" || s === "disconnected" || s === "closed") teardownWebrtc(true);
       };
+      if (WEBRTC_LOG) {
+        pc.oniceconnectionstatechange = function () {
+          console.log("[webrtc] iceConnectionState:", pc && pc.iceConnectionState);
+        };
+        pc.onicecandidateerror = function (e) {
+          console.log("[webrtc] icecandidateerror:", e.errorCode, e.errorText, e.url);
+        };
+      }
       await pc.setLocalDescription(await pc.createOffer());
       await iceGatheringComplete(pc, 2500);
       const resp = await fetch("/webrtc/offer", {
@@ -434,6 +478,11 @@ import { FitAddon } from "@xterm/addon-fit";
       await pc.setRemoteDescription({ type: "answer", sdp: ans.sdp });
       if (Array.isArray(ans.candidates)) {
         for (const c of ans.candidates) {
+          if (WEBRTC_LOG) console.log("[webrtc] device candidate:", c);
+          try { await pc.addIceCandidate({ candidate: c, sdpMLineIndex: 0 }); } catch (e) {}
+        }
+        for (const c of synthLanCandidates(ans.candidates)) {
+          if (WEBRTC_LOG) console.log("[webrtc] synth LAN candidate:", c);
           try { await pc.addIceCandidate({ candidate: c, sdpMLineIndex: 0 }); } catch (e) {}
         }
       }
@@ -652,7 +701,18 @@ import { FitAddon } from "@xterm/addon-fit";
 
   setInterval(function () {
     const stale = performance.now() - lastFrameAt > 2500;
-    if (stale) {
+    /* A static desktop legitimately stops producing frames: content-dedup only
+     * transmits on change, so "no frame for 2.5 s" is the normal idle state, not
+     * a signal loss. Keep the last painted frame on screen as long as we have one
+     * and both the stream and the source are healthy — only fall back to the
+     * NO SIGNAL overlay when the frame is stale AND something is actually wrong
+     * (never received a frame, stream offline, device unreachable, or the source
+     * dropped / lost lock, which /stats reflects within ~1 s). */
+    const everHadFrame = lastFrameAt > 0;
+    const d = statsFresh ? deviceStats : null;
+    const sourceLive = !!d && (String(d.pipeline).indexOf("testpat") >= 0 || !!d.hdmi_locked);
+    const staticScreen = everHadFrame && streamUp && sourceLive;
+    if (stale && !staticScreen) {
       const { r, h } = noSignalReason();
       nsReason.textContent = r;
       nsHint.textContent = h;
