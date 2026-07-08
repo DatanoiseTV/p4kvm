@@ -146,6 +146,7 @@ static int on_msg(esp_peer_msg_t *msg, void *ctx)
         memcpy(s_answer_sdp, msg->data, n);
         s_answer_sdp[n] = '\0';
         s_answer_ready = true;
+        ESP_LOGI(TAG, "answer SDP ready (%d bytes)", n);
     } else if (msg->type == ESP_PEER_MSG_TYPE_CANDIDATE) {
         if (s_cand_count < RTC_MAX_CANDIDATES) {
             const char *c = (const char *)msg->data;
@@ -157,6 +158,7 @@ static int on_msg(esp_peer_msg_t *msg, void *ctx)
             size_t n = strnlen(c, RTC_MAX_CAND_LEN - 1);
             memcpy(s_cand[s_cand_count], c, n);
             s_cand[s_cand_count][n] = '\0';
+            ESP_LOGI(TAG, "local candidate %d: %s", s_cand_count, s_cand[s_cand_count]);
             s_cand_count++;
         }
     }
