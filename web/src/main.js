@@ -126,7 +126,7 @@ import { FitAddon } from "@xterm/addon-fit";
     const captured = kbdCaptured();
     stage.classList.toggle("captured", captured);
     canvas.classList.toggle("pointer-locked", pointerLockActive());
-    if (!wsReady()) {
+    if (!hidReady()) {
       return; /* connection state owns the pill while the link is down */
     }
     if (captured) {
@@ -321,10 +321,124 @@ import { FitAddon } from "@xterm/addon-fit";
     }
   }
 
+  /* ---------------- WebRTC (hardware H.264 video + HID data channel) ----------------
+   *
+   * Progressive enhancement over MJPEG: the device answers a browser offer via
+   * POST /webrtc/offer (automatic signaling, no external server). When the H.264
+   * track goes live the canvas MJPEG is stopped and the <video> shows through the
+   * (now transparent) canvas, which stays the input surface. Keyboard/mouse then
+   * ride the "hid" SCTP data channel; if the peer connection ever fails, HID
+   * falls back to /ws and MJPEG resumes - so the KVM keeps working regardless.
+   */
+  const video = $("kvm-video");
+  let pc = null;
+  let hidChannel = null;
+  let webrtcActive = false;
+  const webrtcDisabled = /[?&]nowebrtc=1/.test(location.search) || typeof RTCPeerConnection === "undefined";
+
+  function hidChannelOpen() {
+    return !!hidChannel && hidChannel.readyState === "open";
+  }
+
+  /* Input is available over either transport: the WebRTC data channel or /ws. */
+  function hidReady() {
+    return wsReady() || hidChannelOpen();
+  }
+
+  /* HID transport: data channel when open, else the WebSocket. Same wire format. */
+  function hidSend(buf) {
+    if (hidChannelOpen()) {
+      try { hidChannel.send(buf); return; } catch (e) { /* fall through to ws */ }
+    }
+    if (wsReady()) ws.send(buf);
+  }
+
+  function setTransportDiag() {
+    dset("transport", webrtcActive ? "WebRTC · H.264" : "MJPEG", webrtcActive ? "ok" : null);
+  }
+
+  function showWebrtcVideo(on) {
+    webrtcActive = on;
+    if (on) {
+      video.hidden = false;
+      stage.classList.add("webrtc");
+      if (streamAbortController) { streamAbortController.abort(); streamAbortController = null; }
+      streamUp = false;
+      try { canvasCtx.clearRect(0, 0, canvas.width, canvas.height); } catch (e) {}
+    } else {
+      video.hidden = true;
+      stage.classList.remove("webrtc");
+      try { video.srcObject = null; } catch (e) {}
+      if (!streamAbortController) startMjpegStream();
+    }
+    setTransportDiag();
+  }
+
+  function teardownWebrtc(retry) {
+    if (hidChannel) { try { hidChannel.close(); } catch (e) {} hidChannel = null; }
+    if (pc) { try { pc.close(); } catch (e) {} pc = null; }
+    if (webrtcActive) showWebrtcVideo(false);
+    if (retry && !webrtcDisabled) setTimeout(startWebrtc, 5000);
+  }
+
+  function iceGatheringComplete(peer, timeoutMs) {
+    if (peer.iceGatheringState === "complete") return Promise.resolve();
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        peer.removeEventListener("icegatheringstatechange", check);
+        resolve();
+      };
+      const check = () => { if (peer.iceGatheringState === "complete") finish(); };
+      peer.addEventListener("icegatheringstatechange", check);
+      setTimeout(finish, timeoutMs); /* non-trickle: proceed with candidates gathered so far */
+    });
+  }
+
+  async function startWebrtc() {
+    if (webrtcDisabled || pc) return;
+    try {
+      pc = new RTCPeerConnection({ iceServers: [] }); /* LAN/tunnel: host candidates suffice */
+      hidChannel = pc.createDataChannel("hid", { ordered: true });
+      pc.addTransceiver("video", { direction: "recvonly" });
+      pc.ontrack = function (ev) {
+        video.srcObject = ev.streams && ev.streams[0] ? ev.streams[0] : new MediaStream([ev.track]);
+        video.play().catch(function () {});
+        showWebrtcVideo(true);
+      };
+      pc.onconnectionstatechange = function () {
+        const s = pc && pc.connectionState;
+        if (s === "failed" || s === "disconnected" || s === "closed") teardownWebrtc(true);
+      };
+      await pc.setLocalDescription(await pc.createOffer());
+      await iceGatheringComplete(pc, 1500);
+      const resp = await fetch("/webrtc/offer", {
+        method: "POST",
+        headers: { "Content-Type": "application/sdp" },
+        body: pc.localDescription.sdp,
+      });
+      if (!resp.ok) throw new Error("signal " + resp.status);
+      const ans = await resp.json();
+      await pc.setRemoteDescription({ type: "answer", sdp: ans.sdp });
+      if (Array.isArray(ans.candidates)) {
+        for (const c of ans.candidates) {
+          try { await pc.addIceCandidate({ candidate: c, sdpMLineIndex: 0 }); } catch (e) {}
+        }
+      }
+      /* Give the media path a few seconds to come up; otherwise fall back. */
+      setTimeout(function () { if (pc && !webrtcActive) teardownWebrtc(true); }, 8000);
+    } catch (e) {
+      teardownWebrtc(true);
+    }
+  }
+
   /* ---------------- device stats / diagnostics ---------------- */
 
   const DIAG_ROWS = [
     ["stream", "STREAM"],
+    ["transport", "TRANSPORT"],
     ["input", "INPUT LINK"],
     ["usb", "USB HID"],
     ["hdmi", "HDMI SOURCE"],
@@ -430,7 +544,7 @@ import { FitAddon } from "@xterm/addon-fit";
 
   function renderDiagnostics() {
     dset("stream", streamUp ? "connected" : "reconnecting", streamUp ? "ok" : "err");
-    dset("input", wsReady() ? "connected" : "reconnecting", wsReady() ? "ok" : "err");
+    dset("input", hidReady() ? "connected" : "reconnecting", hidReady() ? "ok" : "err");
     dset("net", teleMbps.textContent + " Mb/s · draw " + teleFps.textContent + " fps");
     const d = deviceStats;
     if (!d || !statsFresh) {
@@ -1072,7 +1186,7 @@ import { FitAddon } from "@xterm/addon-fit";
   }
 
   function sendRawKeyboard(mod, keycodes) {
-    if (!wsReady()) return;
+    if (!wsReady() && !hidChannelOpen()) return;
     const k = keycodes.slice(0, 6);
     while (k.length < 6) k.push(0);
     const buf = new ArrayBuffer(8);
@@ -1080,7 +1194,7 @@ import { FitAddon } from "@xterm/addon-fit";
     dv.setUint8(0, 2);
     dv.setUint8(1, mod & 0xff);
     for (let i = 0; i < 6; i++) dv.setUint8(2 + i, k[i]);
-    ws.send(buf);
+    hidSend(buf);
   }
 
   function syncKeyboard(ev) {
@@ -1153,25 +1267,25 @@ import { FitAddon } from "@xterm/addon-fit";
   }
 
   function updateHidToolButtons() {
-    const ok = wsReady();
+    const ok = hidReady();
     btnSendEsc.disabled = !ok;
     btnCad.disabled = !ok;
     btnPasteClip.disabled = !ok;
   }
 
   btnSendEsc.addEventListener("click", function () {
-    if (!wsReady()) return;
+    if (!hidReady()) return;
     tapKey(0, 0x29);
     logKey(0, "Escape");
   });
   btnCad.addEventListener("click", function () {
     /* Ctrl (0x01) + Alt (0x04) + Delete (0x4c) */
-    if (!wsReady()) return;
+    if (!hidReady()) return;
     tapKey(0x05, 0x4c);
     logKey(0x05, "Delete");
   });
   btnPasteClip.addEventListener("click", function () {
-    if (!wsReady()) return;
+    if (!hidReady()) return;
     if (!navigator.clipboard || !navigator.clipboard.readText) {
       setHint("clipboard API unavailable (use HTTPS or localhost)");
       return;
@@ -1274,7 +1388,7 @@ import { FitAddon } from "@xterm/addon-fit";
     raf = 0;
     if (!pending) return;
     updatePtrHud(pending); /* reflect the report even while the link is down */
-    if (!wsReady()) return;
+    if (!hidReady()) return;
     const p = pending;
     pending = null;
     const buf = new ArrayBuffer(8);
@@ -1292,7 +1406,7 @@ import { FitAddon } from "@xterm/addon-fit";
       dv.setUint8(7, 0);
     }
     dv.setInt8(6, p.wheel);
-    ws.send(buf);
+    hidSend(buf);
   }
 
   function flushPendingIfOtherMode(m) {
@@ -1572,6 +1686,14 @@ import { FitAddon } from "@xterm/addon-fit";
     connectWs();
   }, 400);
 
+  /* Upgrade to WebRTC (H.264 + data-channel HID) once the baseline is up. MJPEG
+   * keeps painting until the video track goes live, so nothing shows black. */
+  setTransportDiag();
+  let webrtcTimer = setTimeout(function () {
+    webrtcTimer = null;
+    startWebrtc();
+  }, 1200);
+
   let statsTimer = null;
   let statsKickoff = setTimeout(function () {
     statsKickoff = null;
@@ -1591,9 +1713,11 @@ import { FitAddon } from "@xterm/addon-fit";
         streamAbortController.abort();
         streamAbortController = null;
       }
-      for (const t of [qualitySyncTimer, initialWsTimer, statsKickoff]) {
+      for (const t of [qualitySyncTimer, initialWsTimer, statsKickoff, webrtcTimer]) {
         if (t) clearTimeout(t);
       }
+      if (hidChannel) { try { hidChannel.close(); } catch (e) {} hidChannel = null; }
+      if (pc) { try { pc.close(); } catch (e) {} pc = null; }
       if (statsTimer) clearInterval(statsTimer);
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);

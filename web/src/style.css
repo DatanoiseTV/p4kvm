@@ -221,8 +221,24 @@ body {
   outline: none;
   touch-action: none;
   background: #000;
+  position: relative;
+  z-index: 1;
 }
 #kvm.pointer-locked { cursor: none; }
+
+/* WebRTC video sits behind the canvas, which stays the input surface. When the
+ * H.264 track is live the canvas background goes transparent so the video shows
+ * through while still capturing pointer + keyboard. */
+#kvm-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  background: #000;
+  z-index: 0;
+}
+.stage.webrtc #kvm { background: transparent; }
 
 /* capture crop-marks: shown while the keyboard is captured */
 .bracket {
