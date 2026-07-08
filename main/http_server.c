@@ -30,6 +30,7 @@
 
 #include "atx_ctrl.h"
 #include "audio_stream.h"
+#include "capture_h264.h"
 #include "jpeg_frame.h"
 #include "runtime_cfg.h"
 #include "usb_hid.h"
@@ -341,7 +342,7 @@ static esp_err_t stats_get(httpd_req_t *req)
                      "\"clients\":%d,\"hdmi_locked\":%s,\"sys_status\":%u,"
                      "\"cap_frames\":%u,\"enc_frames\":%u,\"enc_errors\":%u,\"recoveries\":%u,"
                      "\"atx_power\":%s,\"atx_reset\":%s,\"usb_hid\":%s,\"wg\":\"%s\",\"audio\":\"%s\","
-                     "\"serial\":\"%s\"%s,"
+                     "\"serial\":\"%s\"%s,\"webrtc\":\"%s\",\"h264_fps\":%u.%u,"
                      "\"uptime_s\":%lld,\"heap_free\":%u,\"psram_free\":%u}",
                      video_stats_pipeline_name(), video_mode_name(), (unsigned long)video_mode_hres(),
                      (unsigned long)video_mode_vres(), (unsigned)(cap_x10 / 10u), (unsigned)(cap_x10 % 10u),
@@ -355,7 +356,8 @@ static esp_err_t stats_get(httpd_req_t *req)
                      (unsigned)g_video_stats.enc_errors, (unsigned)g_video_stats.recoveries,
                      atx_ctrl_power_available() ? "true" : "false", atx_ctrl_reset_available() ? "true" : "false",
                      usb_hid_ready() ? "true" : "false", wireguard_net_status_str(), audio_stream_status_str(),
-                     usb_serial_status_str(), ips,
+                     usb_serial_status_str(), ips, webrtc_kvm_state_str(),
+                     (unsigned)(capture_h264_fps_x10() / 10u), (unsigned)(capture_h264_fps_x10() % 10u),
                      (long long)(esp_timer_get_time() / 1000000),
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));

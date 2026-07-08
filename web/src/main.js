@@ -545,6 +545,10 @@ import { FitAddon } from "@xterm/addon-fit";
   function renderDiagnostics() {
     dset("stream", streamUp ? "connected" : "reconnecting", streamUp ? "ok" : "err");
     dset("input", hidReady() ? "connected" : "reconnecting", hidReady() ? "ok" : "err");
+    if (webrtcActive) {
+      const fps = deviceStats && deviceStats.h264_fps ? " · " + deviceStats.h264_fps + " fps" : "";
+      dset("transport", "WebRTC · H.264" + fps, "ok");
+    }
     dset("net", teleMbps.textContent + " Mb/s · draw " + teleFps.textContent + " fps");
     const d = deviceStats;
     if (!d || !statsFresh) {
