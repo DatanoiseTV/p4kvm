@@ -19,6 +19,7 @@ set(p4kvm_capture_srcs
     "usb_msc.c"
     "usb_serial.c"
     "video_mode.c"
+    "webrtc_kvm.c"
 )
 
 idf_component_register(

@@ -17,6 +17,7 @@
 #include "usb_hid.h"
 #include "usb_serial.h"
 #include "video_mode.h"
+#include "webrtc_kvm.h"
 #include "wifi_net.h"
 #include "wireguard_net.h"
 
@@ -48,6 +49,7 @@ void app_main(void)
     g_jpeg_frame.jpeg_buf[1] = NULL;
     g_jpeg_frame.jpeg_buf[2] = NULL;
     g_jpeg_frame.xmit_mutex = NULL;
+    webrtc_kvm_init(); /* WebRTC session manager (no-op if compiled out) */
     (void)http_server_start();
 
     capture_start();

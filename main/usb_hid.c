@@ -422,6 +422,29 @@ void usb_hid_keyboard(uint8_t modifier, const uint8_t keycode[6])
     (void)xQueueSend(s_hid_q, &m, 0);
 }
 
+void usb_hid_dispatch_report(const uint8_t *buf, size_t len)
+{
+    if (!buf || len < 8) {
+        return;
+    }
+    if (buf[0] == 0x01) {
+        uint8_t buttons = buf[1];
+        int8_t wheel = (int8_t)buf[6];
+        bool relative = buf[7] != 0;
+        if (relative) {
+            int16_t dx = (int16_t)((uint16_t)buf[2] | ((uint16_t)buf[3] << 8));
+            int16_t dy = (int16_t)((uint16_t)buf[4] | ((uint16_t)buf[5] << 8));
+            usb_hid_mouse_rel(buttons, dx, dy, wheel);
+        } else {
+            uint16_t x = (uint16_t)buf[2] | ((uint16_t)buf[3] << 8);
+            uint16_t y = (uint16_t)buf[4] | ((uint16_t)buf[5] << 8);
+            usb_hid_mouse(buttons, x, y, wheel);
+        }
+    } else if (buf[0] == 0x02) {
+        usb_hid_keyboard(buf[1], &buf[2]);
+    }
+}
+
 esp_err_t usb_hid_init(void)
 {
     if (s_hid_q) {

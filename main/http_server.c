@@ -37,6 +37,7 @@
 #include "usb_serial.h"
 #include "video_mode.h"
 #include "video_stats.h"
+#include "webrtc_kvm.h"
 #include "wireguard_net.h"
 
 static const char *TAG = "p4kvm";
@@ -279,22 +280,8 @@ static esp_err_t ws_input_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
-    if (pkt.len >= 8 && buf[0] == 0x01) {
-        uint8_t buttons = buf[1];
-        int8_t wheel = (int8_t)buf[6];
-        bool relative = buf[7] != 0;
-        if (relative) {
-            int16_t dx = (int16_t)((uint16_t)buf[2] | ((uint16_t)buf[3] << 8));
-            int16_t dy = (int16_t)((uint16_t)buf[4] | ((uint16_t)buf[5] << 8));
-            usb_hid_mouse_rel(buttons, dx, dy, wheel);
-        } else {
-            uint16_t x = (uint16_t)buf[2] | ((uint16_t)buf[3] << 8);
-            uint16_t y = (uint16_t)buf[4] | ((uint16_t)buf[5] << 8);
-            usb_hid_mouse(buttons, x, y, wheel);
-        }
-    } else if (pkt.len >= 8 && buf[0] == 0x02) {
-        usb_hid_keyboard(buf[1], &buf[2]);
-    }
+    /* Same wire format as the WebRTC HID data channel (see usb_hid_dispatch_report). */
+    usb_hid_dispatch_report(buf, pkt.len);
 
     return ESP_OK;
 }
@@ -663,6 +650,55 @@ static esp_err_t config_post(httpd_req_t *req)
     return er;
 }
 
+#if CONFIG_P4KVM_WEBRTC_ENABLE
+/**
+ * POST /webrtc/offer - automatic WebRTC signaling over the device's own HTTP
+ * server. Body is the browser's offer SDP (Content-Type text/plain or
+ * application/sdp); the response is a JSON object
+ * {"sdp":"<answer>","candidates":[...]} the browser applies with
+ * setRemoteDescription + addIceCandidate. One round trip, no external server.
+ */
+static esp_err_t webrtc_offer_post(httpd_req_t *req)
+{
+    AUTH_GATE(req);
+    int total = req->content_len;
+    if (total <= 0 || total > 8192) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "offer size");
+    }
+    char *offer = malloc((size_t)total + 1);
+    const size_t resp_cap = 8192;
+    char *resp = malloc(resp_cap);
+    if (!offer || !resp) {
+        free(offer);
+        free(resp);
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+    }
+    int got = 0;
+    while (got < total) {
+        int r = httpd_req_recv(req, offer + got, total - got);
+        if (r <= 0) {
+            free(offer);
+            free(resp);
+            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv");
+        }
+        got += r;
+    }
+    offer[total] = '\0';
+
+    size_t resp_len = 0;
+    esp_err_t er = webrtc_kvm_handle_offer(offer, (size_t)total, resp, resp_cap, &resp_len);
+    free(offer);
+    if (er != ESP_OK) {
+        free(resp);
+        return httpd_resp_send_custom_err(req, "503 Service Unavailable", esp_err_to_name(er));
+    }
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t sent = httpd_resp_send(req, resp, resp_len);
+    free(resp);
+    return sent;
+}
+#endif
+
 /** POST /video-mode?mode=720p60|1080p30 - persist to NVS and restart the device. */
 static esp_err_t video_mode_post(httpd_req_t *req)
 {
@@ -1018,9 +1054,9 @@ httpd_handle_t http_server_start(void)
      * dropped /ws and /serial once MSC + serial were added, and the browser's
      * WS reconnect storm against the missing /ws exhausted the socket pool
      * (accept ENFILE) - the long-hunted "HTTP wedge". Count: root, favicon,
-     * stream, jpeg-quality, stats, atx, video-mode, config x2, media x3, ws,
-     * audio, serial = 15. Keep headroom. */
-    cfg.max_uri_handlers = 18;
+     * stream, jpeg-quality, stream-fps, stats, atx, video-mode, config x2,
+     * media x3, ws, audio, serial, webrtc/offer = 17. Keep headroom. */
+    cfg.max_uri_handlers = 20;
 
     httpd_handle_t h = NULL;
     if (httpd_start(&h, &cfg) != ESP_OK) {
@@ -1053,6 +1089,10 @@ httpd_handle_t http_server_start(void)
     httpd_register_uri_handler(h, &u_media_image);
     httpd_uri_t u_media_eject = {.uri = "/media/eject", .method = HTTP_POST, .handler = media_eject_post};
     httpd_register_uri_handler(h, &u_media_eject);
+#if CONFIG_P4KVM_WEBRTC_ENABLE
+    httpd_uri_t u_webrtc_offer = {.uri = "/webrtc/offer", .method = HTTP_POST, .handler = webrtc_offer_post};
+    httpd_register_uri_handler(h, &u_webrtc_offer);
+#endif
     httpd_uri_t u_ws = {
         .uri = "/ws",
         .method = HTTP_GET,
