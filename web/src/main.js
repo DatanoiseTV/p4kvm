@@ -86,6 +86,9 @@ import { FitAddon } from "@xterm/addon-fit";
   const cfAtxPwr = $("cf-atx-pwr");
   const cfAtxRst = $("cf-atx-rst");
   const cfAtxLvl = $("cf-atx-lvl");
+  const cfTurnUrl = $("cf-turn-url");
+  const cfTurnSecret = $("cf-turn-secret");
+  const cfTurnSecretState = $("cf-turn-secret-state");
   const btnCfgSave = $("btn-cfg-save");
   const drFoot = $("dr-foot");
 
@@ -454,13 +457,33 @@ import { FitAddon } from "@xterm/addon-fit";
     });
   }
 
+  async function fetchIceServers() {
+    /* The device serves STUN plus, when configured, a TURN relay with freshly
+     * derived short-lived credentials (GET /webrtc/ice). Must be fetched before
+     * the RTCPeerConnection so gathering includes relay candidates. Falls back to
+     * public STUN alone if the device has no TURN configured or the call fails. */
+    const fallback = [{ urls: "stun:stun.l.google.com:19302" }];
+    try {
+      const r = await fetch("/webrtc/ice", { cache: "no-store" });
+      if (!r.ok) return fallback;
+      const j = await r.json();
+      if (Array.isArray(j.iceServers) && j.iceServers.length) {
+        if (WEBRTC_LOG) console.log("[webrtc] iceServers:", JSON.stringify(j.iceServers.map((s) => s.urls)));
+        return j.iceServers;
+      }
+    } catch (e) { /* offline / no endpoint */ }
+    return fallback;
+  }
+
   async function startWebrtc() {
     if (webrtcDisabled || pc || webrtcGaveUp()) return;
     webrtcAttempts++;
     try {
-      /* A STUN server is configured so the device-side agent gathers candidates
-       * (esp_peer needs one); on the same LAN the host candidate carries it. */
-      pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+      const iceServers = await fetchIceServers();
+      /* An ICE server is required (esp_peer only gathers with one). A TURN relay,
+       * if present, carries the media when direct/host pairing can't cross the
+       * network (same-NAT hairpin, station isolation, or an off-LAN viewer). */
+      pc = new RTCPeerConnection({ iceServers });
       hidChannel = pc.createDataChannel("hid", { ordered: true });
       pc.addTransceiver("video", { direction: "recvonly" });
       pc.ontrack = function (ev) {
@@ -817,6 +840,8 @@ import { FitAddon } from "@xterm/addon-fit";
       cfAtxPwr.value = String(c.atx_power_gpio);
       cfAtxRst.value = String(c.atx_reset_gpio);
       cfAtxLvl.checked = !!c.atx_active_high;
+      cfTurnUrl.value = c.turn_url || "";
+      cfTurnSecretState.textContent = c.turn_secret_set ? "(set)" : "(not set)";
     } catch (e) {
       /* device restarting */
     }
@@ -833,11 +858,13 @@ import { FitAddon } from "@xterm/addon-fit";
       atx_power_gpio: parseInt(cfAtxPwr.value, 10),
       atx_reset_gpio: parseInt(cfAtxRst.value, 10),
       atx_active_high: cfAtxLvl.checked,
+      turn_url: cfTurnUrl.value.trim(),
     };
     /* Secrets: only send when the user typed something (empty = keep). */
     if (cfPass.value) body.wifi_pass = cfPass.value;
     if (cfWgPriv.value) body.wg_private_key = cfWgPriv.value.trim();
     if (cfWgPsk.value) body.wg_psk = cfWgPsk.value.trim();
+    if (cfTurnSecret.value) body.turn_secret = cfTurnSecret.value.trim();
     try {
       const r = await fetch("/config?reboot=1", {
         method: "POST",

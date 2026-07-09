@@ -166,6 +166,8 @@
         <label class="fld"><span class="fld-l">ATX power GPIO (-1 off)</span><input type="number" class="txt" id="cf-atx-pwr" min="-1" max="54" /></label>
         <label class="fld"><span class="fld-l">ATX reset GPIO (-1 off)</span><input type="number" class="txt" id="cf-atx-rst" min="-1" max="54" /></label>
         <label class="fld"><span class="fld-l">ATX press drives GPIO high</span><span class="gear-ctrl"><input type="checkbox" id="cf-atx-lvl" /></span></label>
+        <label class="fld"><span class="fld-l">TURN relay URL (WebRTC, e.g. turn:host:3478)</span><input type="text" class="txt" id="cf-turn-url" autocomplete="off" placeholder="empty = direct only" /></label>
+        <label class="fld"><span class="fld-l">TURN secret (coturn static-auth-secret) <b id="cf-turn-secret-state"></b></span><input type="password" class="txt" id="cf-turn-secret" placeholder="leave empty to keep" autocomplete="new-password" /></label>
         <div class="row"><button type="button" class="act" id="btn-cfg-save">SAVE &amp; RESTART</button></div>
       </section>
 
