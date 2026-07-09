@@ -539,6 +539,9 @@ static esp_err_t config_get(httpd_req_t *req)
 {
     AUTH_GATE(req);
     char ssid[33], pass[65], priv[64], pub[64], psk[64], ep[96], ip[20], mask[20];
+    char turn_url[96], turn_secret[64];
+    runtime_cfg_get_str(RT_KEY_TURN_URL, "", turn_url, sizeof(turn_url));
+    runtime_cfg_get_str(RT_KEY_TURN_SECRET, "", turn_secret, sizeof(turn_secret));
     runtime_cfg_get_str(RT_KEY_WIFI_SSID, CFG_DFLT_WIFI_SSID, ssid, sizeof(ssid));
     runtime_cfg_get_str(RT_KEY_WIFI_PASS, CFG_DFLT_WIFI_PASS, pass, sizeof(pass));
     runtime_cfg_get_str(RT_KEY_WG_PRIV, CFG_DFLT_WG_PRIV, priv, sizeof(priv));
@@ -565,6 +568,8 @@ static esp_err_t config_get(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "atx_power_gpio", runtime_cfg_get_i32(RT_KEY_ATX_POWER, CONFIG_P4KVM_ATX_POWER_GPIO));
     cJSON_AddNumberToObject(root, "atx_reset_gpio", runtime_cfg_get_i32(RT_KEY_ATX_RESET, CONFIG_P4KVM_ATX_RESET_GPIO));
     cJSON_AddBoolToObject(root, "atx_active_high", runtime_cfg_get_i32(RT_KEY_ATX_ACTIVE_HIGH, CFG_DFLT_ATX_LVL) != 0);
+    cJSON_AddStringToObject(root, "turn_url", turn_url);
+    cJSON_AddBoolToObject(root, "turn_secret_set", turn_secret[0] != '\0');
     char *out = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!out) {
@@ -636,6 +641,8 @@ static esp_err_t config_post(httpd_req_t *req)
     config_take_i32(root, "atx_power_gpio", RT_KEY_ATX_POWER);
     config_take_i32(root, "atx_reset_gpio", RT_KEY_ATX_RESET);
     config_take_i32(root, "atx_active_high", RT_KEY_ATX_ACTIVE_HIGH);
+    config_take_str(root, "turn_url", RT_KEY_TURN_URL);
+    config_take_str(root, "turn_secret", RT_KEY_TURN_SECRET);
     cJSON_Delete(root);
 
     char query[32];
@@ -698,6 +705,27 @@ static esp_err_t webrtc_offer_post(httpd_req_t *req)
     esp_err_t sent = httpd_resp_send(req, resp, resp_len);
     free(resp);
     return sent;
+}
+
+/**
+ * GET /webrtc/ice - the ICE-server list the browser should build its
+ * RTCPeerConnection with: the public STUN server plus, when a TURN relay is
+ * configured, a `turn:` entry with freshly derived short-lived credentials
+ * (same coturn the device relays through). The browser must fetch this before
+ * creating the offer so its candidate gathering includes relay candidates.
+ * Auth-gated: it hands out usable TURN credentials.
+ */
+static esp_err_t webrtc_ice_get(httpd_req_t *req)
+{
+    AUTH_GATE(req);
+    char resp[512];
+    size_t resp_len = 0;
+    if (webrtc_kvm_ice_config_json(resp, sizeof(resp), &resp_len) != ESP_OK) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ice");
+    }
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, resp, resp_len);
 }
 #endif
 
@@ -1057,8 +1085,8 @@ httpd_handle_t http_server_start(void)
      * WS reconnect storm against the missing /ws exhausted the socket pool
      * (accept ENFILE) - the long-hunted "HTTP wedge". Count: root, favicon,
      * stream, jpeg-quality, stream-fps, stats, atx, video-mode, config x2,
-     * media x3, ws, audio, serial, webrtc/offer = 17. Keep headroom. */
-    cfg.max_uri_handlers = 20;
+     * media x3, ws, audio, serial, webrtc/offer, webrtc/ice = 18. Keep headroom. */
+    cfg.max_uri_handlers = 21;
 
     httpd_handle_t h = NULL;
     if (httpd_start(&h, &cfg) != ESP_OK) {
@@ -1094,6 +1122,8 @@ httpd_handle_t http_server_start(void)
 #if CONFIG_P4KVM_WEBRTC_ENABLE
     httpd_uri_t u_webrtc_offer = {.uri = "/webrtc/offer", .method = HTTP_POST, .handler = webrtc_offer_post};
     httpd_register_uri_handler(h, &u_webrtc_offer);
+    httpd_uri_t u_webrtc_ice = {.uri = "/webrtc/ice", .method = HTTP_GET, .handler = webrtc_ice_get};
+    httpd_register_uri_handler(h, &u_webrtc_ice);
 #endif
     httpd_uri_t u_ws = {
         .uri = "/ws",

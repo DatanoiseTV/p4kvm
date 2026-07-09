@@ -15,6 +15,7 @@ set(p4kvm_capture_srcs
     "main.c"
     "runtime_cfg.c"
     "tc358743.c"
+    "turn_cred.c"
     "usb_hid.c"
     "usb_msc.c"
     "usb_serial.c"

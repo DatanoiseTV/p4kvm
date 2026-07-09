@@ -37,6 +37,19 @@ void webrtc_kvm_init(void);
  */
 esp_err_t webrtc_kvm_handle_offer(const char *offer, size_t offer_len, char *resp, size_t resp_cap, size_t *resp_len);
 
+/**
+ * Build the ICE-server list the browser should use, as JSON:
+ *   {"iceServers":[{"urls":"stun:..."},
+ *                  {"urls":"turn:host:port","username":"...","credential":"..."}],
+ *    "ttl":3600}
+ * The TURN entry is present only when a TURN server + secret are configured;
+ * its credentials are freshly derived (short-lived) on each call so the browser
+ * and device relay through the same coturn. Served by GET /webrtc/ice.
+ *
+ * @return ESP_OK on success (TURN entry included only if configured + clock set).
+ */
+esp_err_t webrtc_kvm_ice_config_json(char *resp, size_t resp_cap, size_t *resp_len);
+
 /** True while a WebRTC viewer is connected (data path up). */
 bool webrtc_kvm_connected(void);
 

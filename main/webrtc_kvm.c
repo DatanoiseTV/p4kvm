@@ -38,10 +38,16 @@ static const char *TAG = "p4kvm_rtc";
 #include "esp_peer_default.h"
 
 #include "capture_h264.h"
+#include "runtime_cfg.h"
+#include "turn_cred.h"
 #include "usb_hid.h"
 #include "video_mode.h"
 
 #define RTC_HID_LABEL "hid"
+
+/* TURN credential lifetime. Long enough to cover a negotiation plus a full
+ * session's relay allocation; the browser refetches on each new connection. */
+#define RTC_TURN_TTL_S 3600
 
 /* Max time to wait for esp_peer to produce the answer SDP for a single HTTP
  * round-trip; the browser blocks on the POST response until then. Both the host
@@ -308,6 +314,42 @@ static void rtc_inject_lan_host_candidates(void)
     }
 }
 
+esp_err_t webrtc_kvm_ice_config_json(char *resp, size_t resp_cap, size_t *resp_len)
+{
+    if (!resp || !resp_len) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    cJSON *root = cJSON_CreateObject();
+    if (!root) {
+        return ESP_ERR_NO_MEM;
+    }
+    cJSON *arr = cJSON_AddArrayToObject(root, "iceServers");
+    cJSON *stun = cJSON_CreateObject();
+    cJSON_AddStringToObject(stun, "urls", "stun:stun.l.google.com:19302");
+    cJSON_AddItemToArray(arr, stun);
+
+    char turn_url[96], turn_secret[64], user[24], pass[40];
+    runtime_cfg_get_str(RT_KEY_TURN_URL, "", turn_url, sizeof(turn_url));
+    runtime_cfg_get_str(RT_KEY_TURN_SECRET, "", turn_secret, sizeof(turn_secret));
+    if (turn_url[0] && turn_secret[0] &&
+        turn_cred_make(turn_secret, RTC_TURN_TTL_S, user, sizeof(user), pass, sizeof(pass)) == ESP_OK) {
+        cJSON *turn = cJSON_CreateObject();
+        cJSON_AddStringToObject(turn, "urls", turn_url);
+        cJSON_AddStringToObject(turn, "username", user);
+        cJSON_AddStringToObject(turn, "credential", pass);
+        cJSON_AddItemToArray(arr, turn);
+        cJSON_AddNumberToObject(root, "ttl", RTC_TURN_TTL_S);
+    }
+
+    bool ok = cJSON_PrintPreallocated(root, resp, (int)resp_cap, false);
+    cJSON_Delete(root);
+    if (!ok) {
+        return ESP_ERR_NO_MEM;
+    }
+    *resp_len = strlen(resp);
+    return ESP_OK;
+}
+
 static esp_err_t build_answer_json(char *resp, size_t resp_cap, size_t *resp_len)
 {
     cJSON *root = cJSON_CreateObject();
@@ -370,10 +412,33 @@ esp_err_t webrtc_kvm_handle_offer(const char *offer, size_t offer_len, char *res
          * never gathers/binds a working candidate, so ICE never pairs and the
          * connection dies after a few seconds. A public STUN server also lets it
          * discover a server-reflexive candidate for off-LAN (tunnel) viewers.
-         * static so it outlives this stack frame for the peer's lifetime. */
-        static esp_peer_ice_server_cfg_t s_ice_servers[] = {
-            {.stun_url = (char *)"stun:stun.l.google.com:19302"},
-        };
+         * static so it outlives this stack frame for the peer's lifetime.
+         *
+         * A configured TURN server is added as a second entry. On a same-LAN or
+         * symmetric-NAT network where direct/hairpin pairing fails, the relay
+         * candidate is the only path that works; the browser is handed the same
+         * server via GET /webrtc/ice so both ends relay through it. Credentials
+         * are short-lived (derived from the coturn static-auth-secret), so the
+         * static buffers only need to outlive this negotiation. */
+        static esp_peer_ice_server_cfg_t s_ice_servers[2];
+        static char s_turn_url[96];
+        static char s_turn_user[24];
+        static char s_turn_pass[40];
+        int server_num = 0;
+        s_ice_servers[server_num++] = (esp_peer_ice_server_cfg_t){
+            .stun_url = (char *)"stun:stun.l.google.com:19302"};
+
+        char turn_secret[64];
+        runtime_cfg_get_str(RT_KEY_TURN_URL, "", s_turn_url, sizeof(s_turn_url));
+        runtime_cfg_get_str(RT_KEY_TURN_SECRET, "", turn_secret, sizeof(turn_secret));
+        if (s_turn_url[0] && turn_secret[0] &&
+            turn_cred_make(turn_secret, RTC_TURN_TTL_S, s_turn_user, sizeof(s_turn_user),
+                           s_turn_pass, sizeof(s_turn_pass)) == ESP_OK) {
+            s_ice_servers[server_num++] = (esp_peer_ice_server_cfg_t){
+                .stun_url = s_turn_url, .user = s_turn_user, .psw = s_turn_pass};
+            ESP_LOGI(TAG, "TURN relay enabled: %s", s_turn_url);
+        }
+
         /* Browsers emit ~12 host candidates (one per interface, mDNS-obfuscated);
          * the default cap of 10 drops some ("Remote candidate over limited 10").
          * Raise it so the real reachable one is not the one dropped. */
@@ -386,7 +451,7 @@ esp_err_t webrtc_kvm_handle_offer(const char *offer, size_t offer_len, char *res
             .role = ESP_PEER_ROLE_CONTROLLED,
             .ice_trans_policy = ESP_PEER_ICE_TRANS_POLICY_ALL,
             .server_lists = s_ice_servers,
-            .server_num = sizeof(s_ice_servers) / sizeof(s_ice_servers[0]),
+            .server_num = server_num,
             .video_info = {.codec = ESP_PEER_VIDEO_CODEC_H264, .width = (int)w, .height = (int)h, .fps = 30},
             .audio_dir = ESP_PEER_MEDIA_DIR_NONE,
             .video_dir = ESP_PEER_MEDIA_DIR_SEND_ONLY,
@@ -483,6 +548,14 @@ esp_err_t webrtc_kvm_handle_offer(const char *offer, size_t offer_len, char *res
 {
     (void)offer;
     (void)offer_len;
+    (void)resp;
+    (void)resp_cap;
+    (void)resp_len;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+esp_err_t webrtc_kvm_ice_config_json(char *resp, size_t resp_cap, size_t *resp_len)
+{
     (void)resp;
     (void)resp_cap;
     (void)resp_len;

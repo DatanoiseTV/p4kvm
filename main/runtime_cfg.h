@@ -40,6 +40,11 @@ esp_err_t runtime_cfg_set_i32(const char *key, int32_t value);
 #define RT_KEY_ATX_POWER "atx_pwr"   /* i32 gpio, -1 off */
 #define RT_KEY_ATX_RESET "atx_rst"   /* i32 gpio, -1 off */
 #define RT_KEY_ATX_ACTIVE_HIGH "atx_lvl" /* i32 0/1 */
+/* WebRTC TURN relay (coturn use-auth-secret / RFC 5766 REST). turn_url like
+ * "turn:host:3478"; turn_secret is the coturn static-auth-secret, never sent to
+ * the browser - the device derives short-lived HMAC credentials from it. */
+#define RT_KEY_TURN_URL "turn_url"
+#define RT_KEY_TURN_SECRET "turn_secret"
 
 #ifdef __cplusplus
 }
