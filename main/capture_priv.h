@@ -39,14 +39,15 @@
 #define CAPTURE_JPEG_SUBSAMPLE JPEG_DOWN_SAMPLING_YUV422 /* encoder requires 4:2:2 for YUV422 input */
 #define CAPTURE_PIPELINE_NAME "yuv422"
 /*
- * No byte reorder: hardware-verified (rev 1.3, color-bar test) that the JPEG
- * encoder's "YVYU" FOURCC names the little-endian 32-bit word value - the
- * byte order it consumes is U Y V Y, which is exactly the TC358743's native
- * UYVY stream. A BitScrambler pass (main/uyvy_to_yvyu.bsasm, kept for
- * reference) is therefore unnecessary; it was also measured at ~28 MB/s
- * (147 ms per 1080p frame), far too slow for 30 fps. If a future format
- * really needs reordering, set this to 1 and re-enable the bsasm assembly
- * in main/CMakeLists.txt.
+ * The luma/chroma reorder the encoder needs (TC358743 lands luma-first
+ * [Y,C,Y,C]; the P4 JPEG encoder consumes chroma-first) is done for free in
+ * the CSI bridge write path via esp_cam_ctlr_csi_config_t::byte_swap_en - see
+ * the comment on s_csi_stack_create() in capture_hw.c. CAPTURE_NEEDS_REORDER
+ * gates the alternative software path (a BitScrambler DMA pass,
+ * main/uyvy_to_yvyu.bsasm, kept for reference) which stays OFF: it was
+ * measured at ~28 MB/s (147 ms per 1080p frame), far too slow for 30 fps.
+ * Only set this to 1 (and re-enable the bsasm in main/CMakeLists.txt) for a
+ * future reorder the hardware byte swap cannot express.
  */
 #define CAPTURE_NEEDS_REORDER 0
 #define CAPTURE_FB_COUNT 3

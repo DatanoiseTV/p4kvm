@@ -210,7 +210,7 @@ static esp_err_t s_csi_stack_create(void)
         .data_lane_num = 2,
         .lane_bit_rate_mbps = P4KVM_MIPI_LANE_MBPS,
         .queue_items = CAPTURE_FB_COUNT,
-        .byte_swap_en = false,
+        .byte_swap_en = true,
         .bk_buffer_dis = true,
     };
     esp_isp_processor_cfg_t isp_cfg = {
