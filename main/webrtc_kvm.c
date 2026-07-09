@@ -285,11 +285,12 @@ static void rtc_inject_lan_host_candidates(void)
         return;
     }
 
-    /* Add a host candidate for every up IPv4 interface the browser might share a
-     * subnet with. The WireGuard tunnel IP is intentionally skipped - a LAN
-     * browser cannot reach it, and an off-LAN tunnel viewer uses the srflx path. */
-    static const char *const ifkeys[] = {"WIFI_STA_DEF", "ETH_DEF"};
     int added = 0;
+
+    /* Add a host candidate for every up IPv4 interface the browser might share a
+     * subnet with (LAN). esp_peer binds its ICE socket on all interfaces at one
+     * local port, so each interface IP is reachable at that same port. */
+    static const char *const ifkeys[] = {"WIFI_STA_DEF", "ETH_DEF"};
     for (size_t i = 0; i < sizeof(ifkeys) / sizeof(ifkeys[0]); i++) {
         esp_netif_t *nif = esp_netif_get_handle_from_ifkey(ifkeys[i]);
         if (!nif) {
@@ -309,8 +310,30 @@ static void rtc_inject_lan_host_candidates(void)
         ESP_LOGI(TAG, "injected LAN host candidate: %s:%d", ipstr, port);
         added++;
     }
+
+#if CONFIG_P4KVM_WG_ENABLE
+    /* WireGuard tunnel IP. A browser that is also a peer on the tunnel reaches
+     * the device directly over the encrypted WG link (ChaCha20) - a flat network
+     * with no NAT, hairpin, station isolation or mDNS, i.e. none of the things
+     * that break same-LAN P2P. This is the no-public-relay path: put the browser
+     * on the VPN (which the README already mandates for access) and WebRTC pairs
+     * over the tunnel. Harmless for a non-tunnel browser: its check to a tunnel
+     * address simply fails and ICE falls back. Same local port (bound on all
+     * interfaces). */
+    char wg_ip[20];
+    runtime_cfg_get_str(RT_KEY_WG_LOCAL_IP, CONFIG_P4KVM_WG_LOCAL_IP, wg_ip, sizeof(wg_ip));
+    if (wg_ip[0]) {
+        char cand[RTC_MAX_CAND_LEN];
+        snprintf(cand, sizeof(cand), "candidate:wghost%d 1 udp %u %s %d typ host generation 0",
+                 added, 2130706431u - (unsigned)added, wg_ip, port);
+        sig_add_candidate(cand);
+        ESP_LOGI(TAG, "injected WG host candidate: %s:%d", wg_ip, port);
+        added++;
+    }
+#endif
+
     if (added == 0) {
-        ESP_LOGW(TAG, "no up LAN interface for a host candidate");
+        ESP_LOGW(TAG, "no interface for a host candidate");
     }
 }
 
