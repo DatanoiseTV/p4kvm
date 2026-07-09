@@ -41,6 +41,14 @@ BITSCRAMBLER_PROGRAM(s_bs_prog_uyvy_to_yvyu, "uyvy_to_yvyu");
 #define HDMI_RECOVER_HOTPLUG_ATTEMPTS 3
 #define HDMI_RECOVER_COOLDOWN_US ((int64_t)8 * 1000000)
 #define HDMI_RECOVER_DEEP_COOLDOWN_US ((int64_t)30 * 1000000)
+/* CSI-only re-kick throttle: used while the TC still reports a locked input.
+ * Short (the re-kick is cheap and does not disturb HDMI), but long enough to
+ * let the restarted esp_cam settle before deciding it stalled again. */
+#define HDMI_RECOVER_CSI_REKICK_COOLDOWN_US ((int64_t)3 * 1000000)
+/* After this many re-kicks in a row fail to restore frames (TC still locked),
+ * the MIPI D-PHY is wedged - escalate to a full esp_cam/ISP teardown+recreate,
+ * which is the only thing that re-inits the D-PHY receiver. */
+#define CSI_REKICK_ATTEMPTS_BEFORE_REINIT 4
 /* With DDC5V=0 (source looks unplugged) still try occasionally: the bit can
  * read low transiently (chip mid-reset, marginal sources) and never trying
  * again would leave a live source black forever. */
@@ -117,7 +125,8 @@ static void stats_window_publish(stats_window_t *w, capture_ctx_t *c, int64_t no
  * Frame-stall handling with escalation. Returns after (possibly) recovering;
  * the caller re-enters the semaphore wait.
  */
-static void handle_csi_timeout(capture_ctx_t *c, unsigned bpp, int64_t *cooldown_until_us, int *fail_streak)
+static void handle_csi_timeout(capture_ctx_t *c, unsigned bpp, int64_t *cooldown_until_us, int *fail_streak,
+                               int *rekick_streak)
 {
     if (!c->tc) {
         /* Test-pattern source has no bridge to recover; a stall here is a
@@ -167,6 +176,30 @@ static void handle_csi_timeout(capture_ctx_t *c, unsigned bpp, int64_t *cooldown
     if (now < *cooldown_until_us) {
         return;
     }
+
+    /* If the TC still reports a locked HDMI input (TMDS+SYNC), the fault is on
+     * the CSI-2 link, not the HDMI source. Re-kick CSI only - cycling HPD here
+     * would force the source to re-enumerate, which never settles into a stable
+     * lock (the recover would keep tearing down the signal it is recovering).
+     * Only fall back to the HPD-cycling / full-reinit ladder once the TC has
+     * actually lost lock. */
+    bool locked = have_st && ((st & (SYS_STATUS_TMDS | SYS_STATUS_SYNC)) == (SYS_STATUS_TMDS | SYS_STATUS_SYNC));
+    if (locked) {
+        *fail_streak = 0;
+        g_video_stats.recoveries++;
+        if (*rekick_streak >= CSI_REKICK_ATTEMPTS_BEFORE_REINIT) {
+            /* Re-kicks aren't clearing it: the D-PHY is wedged. Full teardown. */
+            *rekick_streak = 0;
+            (void)capture_hw_csi_full_reinit(c);
+        } else {
+            (*rekick_streak)++;
+            (void)capture_hw_csi_rekick(c);
+        }
+        *cooldown_until_us = now + HDMI_RECOVER_CSI_REKICK_COOLDOWN_US;
+        return;
+    }
+    *rekick_streak = 0;
+
     bool deep = (*fail_streak >= HDMI_RECOVER_HOTPLUG_ATTEMPTS);
     (*fail_streak)++;
     g_video_stats.recoveries++;
@@ -255,6 +288,7 @@ void capture_mjpeg_run(capture_ctx_t *c)
     const unsigned bpp = CAPTURE_PIXEL_BPP;
     int64_t hdmi_recover_cooldown_until_us = 0;
     int hdmi_recover_fail_streak = 0;
+    int hdmi_recover_rekick_streak = 0;
 
     stats_window_t win;
     stats_window_reset(&win, c->csi_dma_done_irqs, (int64_t)esp_timer_get_time());
@@ -266,11 +300,13 @@ void capture_mjpeg_run(capture_ctx_t *c)
 
     while (1) {
         if (xSemaphoreTake(c->csi_done_sem, pdMS_TO_TICKS(2000)) != pdTRUE) {
-            handle_csi_timeout(c, bpp, &hdmi_recover_cooldown_until_us, &hdmi_recover_fail_streak);
+            handle_csi_timeout(c, bpp, &hdmi_recover_cooldown_until_us, &hdmi_recover_fail_streak,
+                               &hdmi_recover_rekick_streak);
             continue;
         }
         hdmi_recover_cooldown_until_us = 0;
         hdmi_recover_fail_streak = 0;
+        hdmi_recover_rekick_streak = 0;
         while (xSemaphoreTake(c->csi_done_sem, 0) == pdTRUE) {
             /* Drop stale completions; done_fb always points at the newest completed frame. */
         }
@@ -332,6 +368,25 @@ void capture_mjpeg_run(capture_ctx_t *c)
         enc_src = yvyu_buf;
 #endif
         int64_t t1 = (int64_t)esp_timer_get_time();
+
+        /* One-shot pixel-format diagnostic: dump the top-left of the raw TC358743
+         * CSI frame and of the buffer handed to the JPEG encoder. On a dark UI
+         * area chroma bytes sit near 0x80 and luma bytes vary, which pins down the
+         * true byte order (UYVY/YUYV/YVYU/VYUY) instead of guessing from colors. */
+#if CONFIG_P4KVM_TC358743_ADV_DEBUG
+        {
+            static uint32_t s_fmt_dump_frame;
+            /* First few frames, then every ~300 frames, so the raw framebuffer
+             * byte order can be checked live against known on-screen content
+             * without a reboot. On a dark UI area chroma sits near 0x80 and luma
+             * varies, which pins the YUV422 order (see capture_hw byte_swap_en). */
+            if (s_fmt_dump_frame < 3u || (s_fmt_dump_frame % 300u) == 0u) {
+                ESP_LOG_BUFFER_HEX_LEVEL(CAPTURE_LOG_TAG "/raw-csi", src, 32, ESP_LOG_WARN);
+                ESP_LOG_BUFFER_HEX_LEVEL(CAPTURE_LOG_TAG "/enc-in", enc_src, 32, ESP_LOG_WARN);
+            }
+            s_fmt_dump_frame++;
+        }
+#endif
 
         esp_err_t er = jpeg_encoder_process(s_jpeg_enc, &enc, enc_src, jpeg_in_bytes, g_jpeg_frame.jpeg_buf[back],
                                             (uint32_t)g_jpeg_frame.jpeg_cap, &out_sz);

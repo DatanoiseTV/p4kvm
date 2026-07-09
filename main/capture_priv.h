@@ -101,6 +101,26 @@ capture_ctx_t *capture_hw_init_start(void);
  */
 esp_err_t capture_hw_hdmi_recover(capture_ctx_t *c, bool deep);
 
+/**
+ * Non-destructive CSI re-kick for the case where the TC358743 still reports a
+ * locked HDMI input (TMDS+SYNC) but the P4 CSI-2 bridge has stalled (no line
+ * packets / no DMA completions). Restarts esp_cam and rewrites the TC's CSI-2
+ * TX start, WITHOUT touching HPD/EDID/TMDS - so the HDMI source is not forced
+ * to re-enumerate. Use this instead of capture_hw_hdmi_recover() whenever the
+ * input is still locked; only fall back to the HPD-cycling recover when the
+ * TC has actually lost lock.
+ */
+esp_err_t capture_hw_csi_rekick(capture_ctx_t *c);
+
+/**
+ * Last-resort recovery for a wedged MIPI D-PHY: destroys and recreates the whole
+ * esp_cam CSI controller + ISP processor (the only way to re-init the D-PHY
+ * receiver), then re-issues the TC358743 CSI start without touching HPD. Use
+ * when repeated capture_hw_csi_rekick() calls fail to restore frames while the
+ * TC still reports a locked input.
+ */
+esp_err_t capture_hw_csi_full_reinit(capture_ctx_t *c);
+
 void capture_debug_csi_timeout(capture_ctx_t *c, unsigned bpp, size_t fb_bytes);
 
 void capture_fill_esp_cam_color_types(esp_cam_ctlr_csi_config_t *csi, esp_isp_processor_cfg_t *isp);
