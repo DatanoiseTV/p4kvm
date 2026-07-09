@@ -39,14 +39,15 @@
 #define CAPTURE_JPEG_SUBSAMPLE JPEG_DOWN_SAMPLING_YUV422 /* encoder requires 4:2:2 for YUV422 input */
 #define CAPTURE_PIPELINE_NAME "yuv422"
 /*
- * No byte reorder: hardware-verified (rev 1.3, color-bar test) that the JPEG
- * encoder's "YVYU" FOURCC names the little-endian 32-bit word value - the
- * byte order it consumes is U Y V Y, which is exactly the TC358743's native
- * UYVY stream. A BitScrambler pass (main/uyvy_to_yvyu.bsasm, kept for
- * reference) is therefore unnecessary; it was also measured at ~28 MB/s
- * (147 ms per 1080p frame), far too slow for 30 fps. If a future format
- * really needs reordering, set this to 1 and re-enable the bsasm assembly
- * in main/CMakeLists.txt.
+ * The luma/chroma reorder the encoder needs (TC358743 lands luma-first
+ * [Y,C,Y,C]; the P4 JPEG encoder consumes chroma-first) is done for free in
+ * the CSI bridge write path via esp_cam_ctlr_csi_config_t::byte_swap_en - see
+ * the comment on s_csi_stack_create() in capture_hw.c. CAPTURE_NEEDS_REORDER
+ * gates the alternative software path (a BitScrambler DMA pass,
+ * main/uyvy_to_yvyu.bsasm, kept for reference) which stays OFF: it was
+ * measured at ~28 MB/s (147 ms per 1080p frame), far too slow for 30 fps.
+ * Only set this to 1 (and re-enable the bsasm in main/CMakeLists.txt) for a
+ * future reorder the hardware byte swap cannot express.
  */
 #define CAPTURE_NEEDS_REORDER 0
 #define CAPTURE_FB_COUNT 3
@@ -100,6 +101,26 @@ capture_ctx_t *capture_hw_init_start(void);
  *             when repeated hotplug cycles fail, e.g. after the source slept for a long time).
  */
 esp_err_t capture_hw_hdmi_recover(capture_ctx_t *c, bool deep);
+
+/**
+ * Non-destructive CSI re-kick for the case where the TC358743 still reports a
+ * locked HDMI input (TMDS+SYNC) but the P4 CSI-2 bridge has stalled (no line
+ * packets / no DMA completions). Restarts esp_cam and rewrites the TC's CSI-2
+ * TX start, WITHOUT touching HPD/EDID/TMDS - so the HDMI source is not forced
+ * to re-enumerate. Use this instead of capture_hw_hdmi_recover() whenever the
+ * input is still locked; only fall back to the HPD-cycling recover when the
+ * TC has actually lost lock.
+ */
+esp_err_t capture_hw_csi_rekick(capture_ctx_t *c);
+
+/**
+ * Last-resort recovery for a wedged MIPI D-PHY: destroys and recreates the whole
+ * esp_cam CSI controller + ISP processor (the only way to re-init the D-PHY
+ * receiver), then re-issues the TC358743 CSI start without touching HPD. Use
+ * when repeated capture_hw_csi_rekick() calls fail to restore frames while the
+ * TC still reports a locked input.
+ */
+esp_err_t capture_hw_csi_full_reinit(capture_ctx_t *c);
 
 void capture_debug_csi_timeout(capture_ctx_t *c, unsigned bpp, size_t fb_bytes);
 

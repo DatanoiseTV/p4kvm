@@ -186,6 +186,76 @@ static bool IRAM_ATTR cam_on_done(esp_cam_ctlr_handle_t h, esp_cam_ctlr_trans_t 
     return high_task_woken;
 }
 
+/*
+ * Build the esp_cam CSI controller + (bypassed) ISP processor. Factored out of
+ * capture_hw_init_start() so capture_hw_csi_full_reinit() can tear the whole
+ * stack down and recreate it - the only way to re-init the MIPI D-PHY receiver,
+ * which occasionally comes up wedged (TC locked at 0x9f but the P4 sees no line
+ * sync: has_hsync=0, FIFO fills, no DMA completions). esp_cam stop/start does
+ * NOT reset the D-PHY, so a plain re-kick cannot rescue that state.
+ *
+ * byte_swap_en swaps the two bytes of each 16-bit YUV422 element in the CSI
+ * bridge write path (Y C -> C Y). The TC358743 lands luma-first [Y,C,Y,C] in
+ * memory but the P4 JPEG encoder consumes chroma-first, so without this the
+ * luma and chroma bytes are interleave-swapped (2-pixel vertical stripes on
+ * solid colours). Verified against the raw framebuffer hex dump.
+ */
+static esp_err_t s_csi_stack_create(void)
+{
+    esp_cam_ctlr_csi_config_t csi_cfg = {
+        .ctlr_id = 0,
+        .clk_src = MIPI_CSI_PHY_CLK_SRC_DEFAULT,
+        .h_res = s_cap.hres,
+        .v_res = s_cap.vres,
+        .data_lane_num = 2,
+        .lane_bit_rate_mbps = P4KVM_MIPI_LANE_MBPS,
+        .queue_items = CAPTURE_FB_COUNT,
+        .byte_swap_en = true,
+        .bk_buffer_dis = true,
+    };
+    esp_isp_processor_cfg_t isp_cfg = {
+        .clk_src = ISP_CLK_SRC_DEFAULT,
+        .clk_hz = 80 * 1000000,
+        .input_data_source = ISP_INPUT_DATA_SOURCE_CSI,
+        .yuv_range = ISP_COLOR_RANGE_LIMIT,
+        .yuv_std = ISP_YUV_CONV_STD_BT709,
+        .has_line_start_packet = false,
+        .has_line_end_packet = false,
+        .h_res = s_cap.hres,
+        .v_res = s_cap.vres,
+        .bayer_order = COLOR_RAW_ELEMENT_ORDER_BGGR,
+        .intr_priority = 0,
+        .flags = {.bypass_isp = true, .byte_swap_en = false},
+    };
+    capture_fill_esp_cam_color_types(&csi_cfg, &isp_cfg);
+
+    ESP_RETURN_ON_ERROR(esp_cam_new_csi_ctlr(&csi_cfg, &s_cam), CAPTURE_LOG_TAG, "new csi ctlr");
+
+    esp_cam_ctlr_evt_cbs_t cbs = {
+        .on_get_new_trans = cam_on_get_new,
+        .on_trans_finished = cam_on_done,
+    };
+    ESP_RETURN_ON_ERROR(esp_cam_ctlr_register_event_callbacks(s_cam, &cbs, &s_cap), CAPTURE_LOG_TAG, "cbs");
+    ESP_RETURN_ON_ERROR(esp_cam_ctlr_enable(s_cam), CAPTURE_LOG_TAG, "cam enable");
+    ESP_RETURN_ON_ERROR(esp_isp_new_processor(&isp_cfg, &s_isp_bypass), CAPTURE_LOG_TAG, "new isp");
+    ISP.cntl.isp_en = 0;
+    return ESP_OK;
+}
+
+static void s_csi_stack_destroy(void)
+{
+    if (s_cam) {
+        (void)esp_cam_ctlr_stop(s_cam);
+        (void)esp_cam_ctlr_disable(s_cam);
+        (void)esp_cam_ctlr_del(s_cam);
+        s_cam = NULL;
+    }
+    if (s_isp_bypass) {
+        (void)esp_isp_del_processor(s_isp_bypass);
+        s_isp_bypass = NULL;
+    }
+}
+
 capture_ctx_t *capture_hw_init_start(void)
 {
     esp_ldo_channel_handle_t ldo = NULL;
@@ -255,44 +325,7 @@ capture_ctx_t *capture_hw_init_start(void)
         return NULL;
     }
 
-    esp_cam_ctlr_csi_config_t csi_cfg = {
-        .ctlr_id = 0,
-        .clk_src = MIPI_CSI_PHY_CLK_SRC_DEFAULT,
-        .h_res = s_cap.hres,
-        .v_res = s_cap.vres,
-        .data_lane_num = 2,
-        .lane_bit_rate_mbps = P4KVM_MIPI_LANE_MBPS,
-        .queue_items = CAPTURE_FB_COUNT,
-        .byte_swap_en = false,
-        .bk_buffer_dis = true,
-    };
-    esp_isp_processor_cfg_t isp_cfg = {
-        .clk_src = ISP_CLK_SRC_DEFAULT,
-        .clk_hz = 80 * 1000000,
-        .input_data_source = ISP_INPUT_DATA_SOURCE_CSI,
-        .yuv_range = ISP_COLOR_RANGE_LIMIT,
-        .yuv_std = ISP_YUV_CONV_STD_BT709,
-        .has_line_start_packet = false,
-        .has_line_end_packet = false,
-        .h_res = s_cap.hres,
-        .v_res = s_cap.vres,
-        .bayer_order = COLOR_RAW_ELEMENT_ORDER_BGGR,
-        .intr_priority = 0,
-        .flags = {.bypass_isp = true, .byte_swap_en = false},
-    };
-    capture_fill_esp_cam_color_types(&csi_cfg, &isp_cfg);
-
-    ESP_ERROR_CHECK(esp_cam_new_csi_ctlr(&csi_cfg, &s_cam));
-
-    esp_cam_ctlr_evt_cbs_t cbs = {
-        .on_get_new_trans = cam_on_get_new,
-        .on_trans_finished = cam_on_done,
-    };
-    ESP_ERROR_CHECK(esp_cam_ctlr_register_event_callbacks(s_cam, &cbs, &s_cap));
-
-    ESP_ERROR_CHECK(esp_cam_ctlr_enable(s_cam));
-    ESP_ERROR_CHECK(esp_isp_new_processor(&isp_cfg, &s_isp_bypass));
-    ISP.cntl.isp_en = 0;
+    ESP_ERROR_CHECK(s_csi_stack_create());
     capture_configure_p4_csi_bridge(s_cap.hres, s_cap.vres);
    
     ESP_ERROR_CHECK(tc358743_enable_hdmi_output(s_cap.tc));
@@ -358,5 +391,86 @@ esp_err_t capture_hw_hdmi_recover(capture_ctx_t *c, bool deep)
         return er;
     }
     ESP_LOGI(CAPTURE_LOG_TAG, "esp_cam_ctlr_start after HDMI recover");
+    return ESP_OK;
+}
+
+esp_err_t capture_hw_csi_rekick(capture_ctx_t *c)
+{
+    ESP_RETURN_ON_FALSE(c && c->tc && c->csi_done_sem, ESP_ERR_INVALID_ARG, CAPTURE_LOG_TAG, "ctx");
+    ESP_RETURN_ON_FALSE(s_cam, ESP_ERR_INVALID_STATE, CAPTURE_LOG_TAG, "cam");
+
+    /* HDMI is still locked; only the CSI-2 link stalled. Bounce esp_cam and
+     * re-issue the TC's CSI_START without cycling HPD, so the source keeps
+     * transmitting and does not re-enumerate. */
+    ESP_LOGW(CAPTURE_LOG_TAG, "CSI re-kick (HDMI still locked): esp_cam stop → reapply CSI → esp_cam start");
+
+    esp_err_t er = esp_cam_ctlr_stop(s_cam);
+    if (er == ESP_ERR_INVALID_STATE) {
+        ESP_LOGD(CAPTURE_LOG_TAG, "esp_cam_ctlr_stop: not started (%s), continuing", esp_err_to_name(er));
+    } else if (er != ESP_OK) {
+        ESP_LOGW(CAPTURE_LOG_TAG, "esp_cam_ctlr_stop: %s", esp_err_to_name(er));
+        return er;
+    }
+
+    capture_drain_csi_done_sem(c->csi_done_sem);
+
+    er = tc358743_reapply_csi_path_after_hdmi(c->tc);
+    if (er != ESP_OK) {
+        ESP_LOGW(CAPTURE_LOG_TAG, "tc358743_reapply_csi_path_after_hdmi: %s", esp_err_to_name(er));
+    }
+
+    capture_configure_p4_csi_bridge(c->hres, c->vres);
+
+    c->ping_fb_idx = 0;
+    c->done_fb = NULL;
+    c->csi_dma_done_irqs = 0;
+    c->csi_get_new_irqs = 0;
+
+    er = esp_cam_ctlr_start(s_cam);
+    if (er != ESP_OK) {
+        ESP_LOGE(CAPTURE_LOG_TAG, "esp_cam_ctlr_start after CSI re-kick: %s", esp_err_to_name(er));
+        return er;
+    }
+    ESP_LOGI(CAPTURE_LOG_TAG, "esp_cam_ctlr_start after CSI re-kick");
+    return ESP_OK;
+}
+
+esp_err_t capture_hw_csi_full_reinit(capture_ctx_t *c)
+{
+    ESP_RETURN_ON_FALSE(c && c->tc && c->csi_done_sem, ESP_ERR_INVALID_ARG, CAPTURE_LOG_TAG, "ctx");
+
+    /* Last resort when re-kick can't rescue a wedged D-PHY: destroy and recreate
+     * the whole esp_cam/ISP stack (re-inits the MIPI D-PHY receiver), then
+     * re-issue the TC CSI start. HPD is left alone so the source does not
+     * re-enumerate. */
+    ESP_LOGW(CAPTURE_LOG_TAG, "CSI full re-init: destroy+recreate esp_cam/ISP (D-PHY reset)");
+
+    s_csi_stack_destroy();
+    capture_drain_csi_done_sem(c->csi_done_sem);
+
+    esp_err_t er = s_csi_stack_create();
+    if (er != ESP_OK) {
+        ESP_LOGE(CAPTURE_LOG_TAG, "s_csi_stack_create after full re-init: %s", esp_err_to_name(er));
+        return er;
+    }
+    capture_configure_p4_csi_bridge(c->hres, c->vres);
+
+    er = tc358743_reapply_csi_path_after_hdmi(c->tc);
+    if (er != ESP_OK) {
+        ESP_LOGW(CAPTURE_LOG_TAG, "tc358743_reapply_csi_path_after_hdmi: %s", esp_err_to_name(er));
+    }
+    capture_configure_p4_csi_bridge(c->hres, c->vres);
+
+    c->ping_fb_idx = 0;
+    c->done_fb = NULL;
+    c->csi_dma_done_irqs = 0;
+    c->csi_get_new_irqs = 0;
+
+    er = esp_cam_ctlr_start(s_cam);
+    if (er != ESP_OK) {
+        ESP_LOGE(CAPTURE_LOG_TAG, "esp_cam_ctlr_start after full re-init: %s", esp_err_to_name(er));
+        return er;
+    }
+    ESP_LOGI(CAPTURE_LOG_TAG, "esp_cam_ctlr_start after CSI full re-init");
     return ESP_OK;
 }
